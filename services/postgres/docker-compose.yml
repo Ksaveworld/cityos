@@ -1,0 +1,21 @@
+name: cityos-medical-dev
+
+services:
+  database:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: cityos
+      POSTGRES_USER: cityos
+      POSTGRES_PASSWORD: cityos_dev
+    ports:
+      - "55432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cityos -d cityos"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - cityos_medical_pgdata:/var/lib/postgresql/data
+
+volumes:
+  cityos_medical_pgdata:

@@ -4,6 +4,15 @@
     "api/chat.ts": {
       "maxDuration": 30,
       "supportsCancellation": true
+    },
+    "api/cityos.ts": {
+      "maxDuration": 30
     }
-  }
+  },
+  "rewrites": [
+    {
+      "source": "/v1/:path*",
+      "destination": "/api/cityos?path=:path*"
+    }
+  ]
 }

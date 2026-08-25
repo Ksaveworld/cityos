@@ -9,6 +9,11 @@
     "typecheck": "tsc -b --noEmit",
     "lint": "oxlint",
     "test:chat": "node --test server/chat-core.test.ts",
+    "test:backend": "node --test server/cityos/*.test.ts",
+    "db:up": "docker compose -f services/postgres/docker-compose.yml up -d",
+    "db:down": "docker compose -f services/postgres/docker-compose.yml down",
+    "db:migrate": "node scripts/db-migrate.mjs",
+    "db:seed": "node scripts/db-seed.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
