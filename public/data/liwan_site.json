@@ -1,0 +1,16 @@
+{
+  "name": "龙城服装交易中心",
+  "address": "广州市荔湾区人民南路 89、91、93、89-1 号",
+  "center": [
+    113.2478,
+    23.114
+  ],
+  "event": "5·16 服装交易市场火灾",
+  "date": "2024-05-16",
+  "alarm_time": "09:32",
+  "extinguished_time": "11:40",
+  "note": "接警与扑灭为官方公开口径；首车到场时刻未公开，界面须标注为推定",
+  "site_building_id": "1279394817",
+  "site_building_levels_estimated": true,
+  "site_building_pick_rule": "先判站点中心是否落在建筑多边形内，都不在则取质心最近的一栋"
+}

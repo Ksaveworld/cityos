@@ -1,0 +1,22 @@
+node_modules/
+dist/
+.git/
+.vercel/
+.env*
+
+# Local research and authentication artifacts must not enter Vercel builds.
+artifacts/
+lark-im-resources/
+feishu-lark-*.png
+.claude/
+.impeccable/
+tmp/
+
+# Large local-only data and routing artifacts.
+data/raw/
+services/valhalla/valhalla_tiles/
+services/valhalla/*.pbf
+
+__pycache__/
+*.pyc
+*.log

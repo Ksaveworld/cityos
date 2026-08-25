@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="d" x1="0" y1="0" x2="0.28" y2="1">
+      <stop offset="0" stop-color="#7FB2EA" stop-opacity="0"/>
+      <stop offset="0.45" stop-color="#5E9BE0" stop-opacity="0.85"/>
+      <stop offset="1" stop-color="#3C7FD2" stop-opacity="0.95"/>
+    </linearGradient>
+  </defs>
+  <g stroke="url(#d)" stroke-linecap="round" fill="none">
+    <path d="M14 12 L6 46" stroke-width="1.7"/>
+    <path d="M48 30 L40 70" stroke-width="2"/>
+    <path d="M82 8 L75 40" stroke-width="1.4"/>
+    <path d="M108 52 L100 92" stroke-width="1.9"/>
+    <path d="M136 18 L129 54" stroke-width="1.6"/>
+    <path d="M168 40 L160 78" stroke-width="2.1"/>
+    <path d="M198 10 L191 44" stroke-width="1.5"/>
+    <path d="M228 34 L220 72" stroke-width="1.8"/>
+    <path d="M28 96 L20 134" stroke-width="1.9"/>
+    <path d="M64 120 L56 156" stroke-width="1.5"/>
+    <path d="M94 140 L86 178" stroke-width="2"/>
+    <path d="M124 104 L117 140" stroke-width="1.6"/>
+    <path d="M152 132 L144 170" stroke-width="1.8"/>
+    <path d="M186 112 L178 150" stroke-width="1.4"/>
+    <path d="M214 148 L206 186" stroke-width="2"/>
+    <path d="M242 100 L235 136" stroke-width="1.6"/>
+    <path d="M12 176 L4 212" stroke-width="1.7"/>
+    <path d="M44 196 L36 232" stroke-width="1.5"/>
+    <path d="M76 172 L69 206" stroke-width="1.9"/>
+    <path d="M118 200 L110 236" stroke-width="1.6"/>
+    <path d="M158 188 L150 224" stroke-width="1.8"/>
+    <path d="M196 208 L188 242" stroke-width="1.4"/>
+    <path d="M232 194 L224 230" stroke-width="1.7"/>
+  </g>
+</svg>

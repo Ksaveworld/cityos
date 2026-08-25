@@ -1,0 +1,29 @@
+{
+  "id": "liwan-haizhu-response-area-20260817",
+  "label": "荔湾—海珠处置区域",
+  "rendered_at": "2026-08-17",
+  "render_size": [1920, 1280],
+  "georeference": {
+    "projection": "EPSG:3857 display / WGS84 corner coordinates",
+    "bounds_wgs84": [
+      113.21419102368037,
+      23.078126269065322,
+      113.28716050239234,
+      23.122872031353282
+    ]
+  },
+  "source": {
+    "style": "OpenFreeMap Positron",
+    "style_url": "https://tiles.openfreemap.org/styles/positron",
+    "schema": "OpenMapTiles",
+    "map_data": "OpenStreetMap",
+    "openfreemap_planet_snapshot_observed": "20260802_080001_pt"
+  },
+  "attribution": "OpenFreeMap © OpenMapTiles Data from OpenStreetMap",
+  "license_boundary": {
+    "openfreemap_project": "MIT; included projects retain their own licenses",
+    "openmaptiles_schema": "BSD + CC-BY; attribution required",
+    "openstreetmap_data": "ODbL 1.0; attribution and share-alike obligations apply to derived databases",
+    "notice": "This raster is a local produced-work snapshot for the named response area, not a complete Guangzhou basemap. Keep the on-map attribution when redistributing screenshots or recordings."
+  }
+}

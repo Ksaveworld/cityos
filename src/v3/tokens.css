@@ -1,0 +1,26 @@
+/**
+ * v3 深色指挥台 token。只挂在 `.v3-root` 下，不污染旧浅色看板。
+ * 报告 / 知识库后续仍走浅色，见 PRD 10.2。
+ */
+.v3-root {
+  --v3-bg: #070b14;
+  --v3-bg-elevated: #101827;
+  --v3-line: rgba(148, 163, 184, 0.22);
+  --v3-ink: #e8eef8;
+  --v3-ink-2: #93a0b5;
+  --v3-ink-3: #64748b;
+  --v3-traffic-smooth: #1ec97a;
+  --v3-traffic-slow: #f5c518;
+  --v3-traffic-jam: #f04a3e;
+  --v3-traffic-severe: #9b1b2e;
+  --v3-building-real: #6b849f;
+  --v3-building-estimated: #2c394c;
+  color: var(--v3-ink);
+  background: var(--v3-bg);
+  font-family: system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+.v3-root,
+.v3-root * {
+  box-sizing: border-box;
+}

@@ -1,0 +1,27 @@
+node_modules/
+dist/
+.env
+.env.local
+
+# 原始数据体积大，不入库；processed 和 mock 要入库
+data/raw/
+
+# Valhalla 预处理产物
+services/valhalla/valhalla_tiles/
+services/valhalla/*.pbf
+
+# scripts/ 里的 Python 脚本产物
+__pycache__/
+*.pyc
+
+.DS_Store
+*.log
+
+# Vercel CLI 的项目关联，不入库
+.vercel
+.env*
+
+# 本地调研与鉴权产物，不入库也不进 Vercel 构建（.vercelignore 同步排除）
+artifacts/
+lark-im-resources/
+feishu-lark-*.png
