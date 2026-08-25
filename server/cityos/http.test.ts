@@ -7,6 +7,10 @@ import type { MedicalService } from './types.ts'
 function fakeService(overrides: Partial<MedicalService> = {}): MedicalService {
   return {
     ingestAdapterEvent: async (input, context) => ({ input, context }),
+    previewAdjustResources: async (input, context) => ({ input, context }),
+    confirmActionRun: async (actionRunId, input, context) => ({ actionRunId, input, context }),
+    executeActionRun: async (actionRunId, input, context) => ({ actionRunId, input, context }),
+    recordTaskFeedback: async (taskPackageId, input, context) => ({ taskPackageId, input, context }),
     getIncident: async (incidentId) => ({ id: incidentId }),
     getContext: async (incidentId) => ({ incident: { id: incidentId }, facilities: [] }),
     getPlans: async () => ({ items: [] }),
@@ -129,4 +133,88 @@ test('unconfigured database fails explicitly instead of pretending success', asy
   assert.equal(response.status, 503)
   assert.equal(payload.error.code, 'DATABASE_NOT_CONFIGURED')
   assert.equal(payload.error.retryable, true)
+})
+
+test('action preview binds the selected facility and write context', async () => {
+  const response = await handleCityosRequest(
+    new Request('http://localhost/v1/actions/adjust_resources/preview', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': 'preview-1',
+        'X-Actor-Id': 'operator-1',
+        'X-Data-Mode': 'demo',
+      },
+      body: JSON.stringify({
+        incidentId: 'incident-1',
+        planVersion: 2,
+        expectedIncidentVersion: 2,
+        previousFacilityId: 'facility-old',
+        candidateFacilityIds: ['facility-a', 'facility-b'],
+        selectedFacilityId: 'facility-b',
+      }),
+    }),
+    {},
+    { service: fakeService(), randomId: () => 'trace-preview' },
+  )
+  const payload = await response.json() as {
+    input: { selectedFacilityId: string }
+    context: { actorId: string }
+  }
+  assert.equal(response.status, 201)
+  assert.equal(payload.input.selectedFacilityId, 'facility-b')
+  assert.equal(payload.context.actorId, 'operator-1')
+})
+
+test('confirm and execute use separate explicit expected-state contracts', async () => {
+  const headers = {
+    'Content-Type': 'application/json',
+    'Idempotency-Key': 'action-step-1',
+    'X-Actor-Id': 'operator-1',
+    'X-Data-Mode': 'demo',
+  }
+  const confirm = await handleCityosRequest(
+    new Request('http://localhost/v1/action-runs/action-1/confirm', {
+      method: 'POST', headers, body: JSON.stringify({ previewHash: 'hash-1', expectedPlanVersion: 2 }),
+    }),
+    {},
+    { service: fakeService(), randomId: () => 'trace-confirm' },
+  )
+  const execute = await handleCityosRequest(
+    new Request('http://localhost/v1/action-runs/action-1/execute', {
+      method: 'POST', headers, body: JSON.stringify({ expectedStatus: 'confirmed' }),
+    }),
+    {},
+    { service: fakeService(), randomId: () => 'trace-execute' },
+  )
+  assert.equal(confirm.status, 200)
+  assert.equal(execute.status, 200)
+  assert.equal((await confirm.json() as { input: { expectedPlanVersion: number } }).input.expectedPlanVersion, 2)
+  assert.equal((await execute.json() as { input: { expectedStatus: string } }).input.expectedStatus, 'confirmed')
+})
+
+test('task feedback requires the caller expected current status', async () => {
+  const response = await handleCityosRequest(
+    new Request('http://localhost/v1/tasks/task-1/feedback', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': 'feedback-1',
+        'X-Actor-Id': 'medical-simulator',
+        'X-Data-Mode': 'demo',
+      },
+      body: JSON.stringify({
+        externalFeedbackId: 'external-feedback-1',
+        status: 'accepted',
+        expectedCurrentStatus: 'issued',
+        occurredAt: 1787616000,
+        receivedAt: 1787616001,
+      }),
+    }),
+    {},
+    { service: fakeService(), randomId: () => 'trace-feedback' },
+  )
+  const payload = await response.json() as { input: { expectedCurrentStatus: string } }
+  assert.equal(response.status, 201)
+  assert.equal(payload.input.expectedCurrentStatus, 'issued')
 })

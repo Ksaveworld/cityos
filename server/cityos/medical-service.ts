@@ -3,12 +3,17 @@ import { createHash, randomUUID } from 'node:crypto'
 import type { CityosDatabase } from './db.ts'
 import { CityosApiError } from './errors.ts'
 import type {
+  AdjustResourcesPreviewInput,
+  ConfirmActionRunInput,
+  ExecuteActionRunInput,
   FacilityStatusChangedInput,
   MedicalService,
+  TaskFeedbackInput,
   WriteContext,
 } from './types.ts'
 
 type Row = Record<string, unknown>
+type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
 
 function number(value: unknown): number {
   return typeof value === 'number' ? value : Number(value)
@@ -16,6 +21,68 @@ function number(value: unknown): number {
 
 function unixSeconds(value: unknown): number {
   return Math.floor(new Date(String(value)).getTime() / 1000)
+}
+
+function hashJson(value: unknown) {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex')
+}
+
+function sameMembers(left: string[], right: string[]) {
+  return left.length === right.length
+    && [...left].sort().every((value, index) => value === [...right].sort()[index])
+}
+
+function actionRunResponse(row: Row, duplicate = false) {
+  const preview = row.preview as Row
+  return {
+    actionRunId: row.id,
+    actionType: row.action_type,
+    incidentId: row.incident_id,
+    status: row.status,
+    planVersion: number(row.plan_version),
+    expectedIncidentVersion: number(row.expected_incident_version),
+    previewHash: row.preview_hash,
+    expiresAt: unixSeconds(row.expires_at),
+    riskLevel: preview.riskLevel,
+    requiresHumanApproval: preview.requiresHumanApproval,
+    previousFacilityId: preview.previousFacilityId,
+    candidateFacilityIds: preview.candidateFacilityIds,
+    selectedFacilityId: preview.selectedFacilityId,
+    confirmedBy: row.confirmed_by ?? undefined,
+    confirmedAt: row.confirmed_at ? unixSeconds(row.confirmed_at) : undefined,
+    result: row.result ?? undefined,
+    duplicate,
+  }
+}
+
+function taskPackageResponse(row: Row) {
+  return {
+    id: String(row.id),
+    incidentId: String(row.incident_id),
+    planVersion: number(row.plan_version),
+    version: number(row.version),
+    mode: String(row.mode),
+    simulated: row.simulated === true,
+    actionRunId: String(row.action_run_id),
+    facilityId: String(row.facility_id),
+    status: String(row.status),
+    payload: row.payload as JsonValue,
+    createdAt: unixSeconds(row.created_at),
+    updatedAt: unixSeconds(row.updated_at),
+  }
+}
+
+function feedbackResponse(row: Row, duplicate = false) {
+  return {
+    id: String(row.id),
+    taskPackageId: String(row.task_package_id),
+    externalFeedbackId: String(row.external_feedback_id),
+    status: String(row.status),
+    occurredAt: unixSeconds(row.occurred_at),
+    receivedAt: unixSeconds(row.received_at),
+    detail: row.detail === null ? undefined : String(row.detail),
+    duplicate,
+  }
 }
 
 function incidentResponse(row: Row) {
@@ -317,6 +384,451 @@ export function createMedicalService(sql: CityosDatabase): MedicalService {
       })
     },
 
+    async previewAdjustResources(input: AdjustResourcesPreviewInput, context: WriteContext) {
+      const requestDocument = {
+        incidentId: input.incidentId,
+        planVersion: input.planVersion,
+        expectedIncidentVersion: input.expectedIncidentVersion,
+        previousFacilityId: input.previousFacilityId,
+        candidateFacilityIds: input.candidateFacilityIds,
+        selectedFacilityId: input.selectedFacilityId,
+      }
+      const requestHash = hashJson(requestDocument)
+      return sql.begin(async (transaction) => {
+        await transaction`
+          SELECT pg_advisory_xact_lock(
+            hashtextextended(${`${input.incidentId}:adjust_resources:${context.idempotencyKey}`}, 0::bigint)
+          )
+        `
+        const [existing] = await transaction`
+          SELECT * FROM cityos.action_run
+          WHERE incident_id = ${input.incidentId}
+            AND action_type = 'adjust_resources'
+            AND idempotency_key = ${context.idempotencyKey}
+        `
+        if (existing) {
+          const storedRequest = existing.request as Row
+          if (storedRequest.requestHash !== requestHash) {
+            throw new CityosApiError(409, 'IDEMPOTENCY_KEY_REUSED', '该幂等键已经用于不同的预览请求。')
+          }
+          return actionRunResponse(existing as Row, true)
+        }
+
+        const [incident] = await transaction`
+          SELECT * FROM cityos.incident WHERE id = ${input.incidentId} FOR UPDATE
+        `
+        if (!incident) throw new CityosApiError(404, 'INCIDENT_NOT_FOUND', '事件不存在。')
+        if (incident.mode !== context.mode) {
+          throw new CityosApiError(409, 'DATA_MODE_MISMATCH', '事件与请求运行模式不一致。')
+        }
+        if (number(incident.current_version) !== input.expectedIncidentVersion) {
+          throw new CityosApiError(409, 'INCIDENT_VERSION_CONFLICT', '事件版本已经变化，请重新生成预览。', {
+            currentVersion: number(incident.current_version),
+          })
+        }
+        if (number(incident.current_plan_version) !== input.planVersion) {
+          throw new CityosApiError(409, 'PLAN_VERSION_CONFLICT', '方案已不是当前版本。', {
+            currentVersion: number(incident.current_plan_version),
+          })
+        }
+
+        const [plan] = await transaction`
+          SELECT * FROM cityos.plan_version
+          WHERE incident_id = ${input.incidentId} AND version = ${input.planVersion}
+          FOR UPDATE
+        `
+        if (!plan) throw new CityosApiError(404, 'PLAN_NOT_FOUND', '方案版本不存在。')
+        if (plan.status !== 'draft' || number(plan.input_version) !== input.expectedIncidentVersion) {
+          throw new CityosApiError(409, 'PLAN_NOT_APPROVABLE', '方案已过期或输入版本不一致。')
+        }
+        const candidates = plan.candidates as Array<{ facilityId?: unknown }>
+        const planCandidateIds = candidates.map((candidate) => String(candidate.facilityId))
+        if (!sameMembers(planCandidateIds, input.candidateFacilityIds)) {
+          throw new CityosApiError(409, 'CANDIDATE_SET_CHANGED', '候选资源集合已经变化，请重新读取方案。')
+        }
+        if (!planCandidateIds.includes(input.selectedFacilityId)) {
+          throw new CityosApiError(400, 'INVALID_SELECTED_FACILITY', '所选接收点不属于当前方案候选项。')
+        }
+        const [selected, previous] = await transaction`
+          SELECT id, status FROM cityos.facility
+          WHERE id IN (${input.selectedFacilityId}, ${input.previousFacilityId})
+          ORDER BY id
+        `.then((rows) => [
+          rows.find((row) => row.id === input.selectedFacilityId),
+          rows.find((row) => row.id === input.previousFacilityId),
+        ])
+        if (!selected || selected.status !== 'available') {
+          throw new CityosApiError(409, 'SELECTED_FACILITY_UNAVAILABLE', '所选接收点当前不可用。')
+        }
+        if (!previous || previous.status !== 'temporarily_unavailable') {
+          throw new CityosApiError(409, 'PREVIOUS_FACILITY_STATE_CHANGED', '原接收点状态已经变化，请重新计算。')
+        }
+
+        const actionRunId = randomUUID()
+        const expiresAt = new Date(Date.now() + 15 * 60 * 1000)
+        const preview = {
+          actionRunId,
+          actionType: 'adjust_resources',
+          incidentId: input.incidentId,
+          planVersion: input.planVersion,
+          expectedIncidentVersion: input.expectedIncidentVersion,
+          expiresAt: Math.floor(expiresAt.getTime() / 1000),
+          riskLevel: 'high',
+          requiresHumanApproval: true,
+          previousFacilityId: input.previousFacilityId,
+          candidateFacilityIds: planCandidateIds,
+          selectedFacilityId: input.selectedFacilityId,
+        } as const
+        const previewHash = hashJson(preview)
+
+        const [created] = await transaction`
+          INSERT INTO cityos.action_run (
+            id, incident_id, action_type, status, actor_id, idempotency_key,
+            plan_version, expected_incident_version, preview_hash, expires_at,
+            request, preview
+          ) VALUES (
+            ${actionRunId}, ${input.incidentId}, 'adjust_resources', 'previewed',
+            ${context.actorId}, ${context.idempotencyKey}, ${input.planVersion},
+            ${input.expectedIncidentVersion}, ${previewHash}, ${expiresAt.toISOString()},
+            ${transaction.json({ ...requestDocument, requestHash })},
+            ${transaction.json(preview)}
+          )
+          RETURNING *
+        `
+        await transaction`
+          INSERT INTO cityos.decision_lineage (
+            id, incident_id, event_type, actor_id, input_version, output_version,
+            action_run_id, detail
+          ) VALUES (
+            ${randomUUID()}, ${input.incidentId}, 'action.previewed', ${context.actorId},
+            ${input.expectedIncidentVersion}, ${input.planVersion}, ${actionRunId},
+            ${transaction.json({ previewHash, selectedFacilityId: input.selectedFacilityId })}
+          )
+        `
+        return actionRunResponse(created as Row)
+      })
+    },
+
+    async confirmActionRun(actionRunId: string, input: ConfirmActionRunInput, context: WriteContext) {
+      const requestHash = hashJson(input)
+      const outcome = await sql.begin(async (transaction) => {
+        const [action] = await transaction`
+          SELECT * FROM cityos.action_run WHERE id = ${actionRunId} FOR UPDATE
+        `
+        if (!action) throw new CityosApiError(404, 'ACTION_RUN_NOT_FOUND', 'ActionRun 不存在。')
+        if (action.confirm_idempotency_key === context.idempotencyKey && ['confirmed', 'succeeded'].includes(String(action.status))) {
+          if (action.confirm_request_hash !== requestHash) {
+            throw new CityosApiError(409, 'IDEMPOTENCY_KEY_REUSED', '该幂等键已经用于不同的确认请求。')
+          }
+          return actionRunResponse(action as Row, true)
+        }
+        if (action.confirm_idempotency_key) {
+          throw new CityosApiError(409, 'ACTION_ALREADY_CONFIRMED', '该 ActionRun 已由其他确认请求处理。')
+        }
+        if (action.status !== 'previewed') {
+          throw new CityosApiError(409, 'ACTION_NOT_PREVIEWED', '只有 previewed ActionRun 可以确认。')
+        }
+        if (new Date(String(action.expires_at)).getTime() <= Date.now()) {
+          await transaction`UPDATE cityos.action_run SET status = 'expired' WHERE id = ${actionRunId}`
+          await transaction`
+            INSERT INTO cityos.decision_lineage (
+              id, incident_id, event_type, actor_id, input_version, output_version,
+              action_run_id, detail
+            ) VALUES (
+              ${randomUUID()}, ${action.incident_id}, 'action.expired', ${context.actorId},
+              ${action.expected_incident_version}, ${action.plan_version}, ${actionRunId},
+              ${transaction.json({ phase: 'confirm' })}
+            )
+          `
+          return { expired: true as const }
+        }
+        if (action.preview_hash !== input.previewHash) {
+          throw new CityosApiError(409, 'PREVIEW_HASH_MISMATCH', 'Preview 内容与确认请求不一致。')
+        }
+        if (number(action.plan_version) !== input.expectedPlanVersion) {
+          throw new CityosApiError(409, 'PLAN_VERSION_CONFLICT', '确认请求引用了错误的方案版本。', {
+            currentVersion: number(action.plan_version),
+          })
+        }
+        const [incident] = await transaction`
+          SELECT * FROM cityos.incident WHERE id = ${action.incident_id} FOR UPDATE
+        `
+        if (!incident || incident.mode !== context.mode) {
+          throw new CityosApiError(409, 'DATA_MODE_MISMATCH', '事件与请求运行模式不一致。')
+        }
+        if (number(incident.current_version) !== number(action.expected_incident_version)
+          || number(incident.current_plan_version) !== number(action.plan_version)) {
+          throw new CityosApiError(409, 'ACTION_INPUT_STALE', '事件输入已变化，旧预览不能确认。', {
+            currentVersion: number(incident.current_version),
+          })
+        }
+        const [plan] = await transaction`
+          SELECT * FROM cityos.plan_version
+          WHERE incident_id = ${action.incident_id} AND version = ${action.plan_version}
+          FOR UPDATE
+        `
+        if (!plan || plan.status !== 'draft' || number(plan.input_version) !== number(action.expected_incident_version)) {
+          throw new CityosApiError(409, 'PLAN_NOT_APPROVABLE', '方案已过期，不能确认。')
+        }
+
+        await transaction`
+          UPDATE cityos.plan_version
+          SET status = 'approved', approved_by = ${context.actorId}, approved_at = now()
+          WHERE id = ${plan.id}
+        `
+        const [confirmed] = await transaction`
+          UPDATE cityos.action_run
+          SET status = 'confirmed', confirmed_by = ${context.actorId}, confirmed_at = now(),
+              confirm_idempotency_key = ${context.idempotencyKey}, confirm_request_hash = ${requestHash}
+          WHERE id = ${actionRunId}
+          RETURNING *
+        `
+        await transaction`
+          INSERT INTO cityos.decision_lineage (
+            id, incident_id, event_type, actor_id, input_version, output_version,
+            action_run_id, detail
+          ) VALUES (
+            ${randomUUID()}, ${action.incident_id}, 'action.confirmed', ${context.actorId},
+            ${action.expected_incident_version}, ${action.plan_version}, ${actionRunId},
+            ${transaction.json({ previewHash: input.previewHash, planVersion: input.expectedPlanVersion })}
+          )
+        `
+        return actionRunResponse(confirmed as Row)
+      })
+      if ('expired' in outcome) {
+        throw new CityosApiError(409, 'ACTION_PREVIEW_EXPIRED', 'Action Preview 已过期，请重新生成。')
+      }
+      return outcome
+    },
+
+    async executeActionRun(actionRunId: string, input: ExecuteActionRunInput, context: WriteContext) {
+      const requestHash = hashJson(input)
+      const outcome = await sql.begin(async (transaction) => {
+        const [action] = await transaction`
+          SELECT * FROM cityos.action_run WHERE id = ${actionRunId} FOR UPDATE
+        `
+        if (!action) throw new CityosApiError(404, 'ACTION_RUN_NOT_FOUND', 'ActionRun 不存在。')
+        if (action.execute_idempotency_key === context.idempotencyKey && action.status === 'succeeded') {
+          if (action.execute_request_hash !== requestHash) {
+            throw new CityosApiError(409, 'IDEMPOTENCY_KEY_REUSED', '该幂等键已经用于不同的执行请求。')
+          }
+          return { ...(action.result as Row), duplicate: true }
+        }
+        if (action.execute_idempotency_key) {
+          throw new CityosApiError(409, 'ACTION_ALREADY_EXECUTED', '该 ActionRun 已由其他执行请求处理。')
+        }
+        if (input.expectedStatus !== 'confirmed' || action.status !== 'confirmed') {
+          throw new CityosApiError(409, 'ACTION_NOT_CONFIRMED', '未确认的 ActionRun 不能执行。')
+        }
+        if (new Date(String(action.expires_at)).getTime() <= Date.now()) {
+          await transaction`UPDATE cityos.action_run SET status = 'expired' WHERE id = ${actionRunId}`
+          await transaction`
+            UPDATE cityos.plan_version
+            SET status = 'draft', approved_by = NULL, approved_at = NULL
+            WHERE incident_id = ${action.incident_id}
+              AND version = ${action.plan_version}
+              AND status = 'approved'
+          `
+          await transaction`
+            INSERT INTO cityos.decision_lineage (
+              id, incident_id, event_type, actor_id, input_version, output_version,
+              action_run_id, detail
+            ) VALUES (
+              ${randomUUID()}, ${action.incident_id}, 'action.expired', ${context.actorId},
+              ${action.expected_incident_version}, ${action.plan_version}, ${actionRunId},
+              ${transaction.json({ phase: 'execute', approvalReset: true })}
+            )
+          `
+          return { expired: true as const }
+        }
+        const [incident] = await transaction`
+          SELECT * FROM cityos.incident WHERE id = ${action.incident_id} FOR UPDATE
+        `
+        if (!incident || incident.mode !== context.mode) {
+          throw new CityosApiError(409, 'DATA_MODE_MISMATCH', '事件与请求运行模式不一致。')
+        }
+        if (incident.mode !== 'demo') {
+          throw new CityosApiError(503, 'LIVE_ADAPTER_NOT_CONFIGURED', '真实任务适配器尚未配置，未执行任何下发。', {
+            retryable: false,
+          })
+        }
+        if (number(incident.current_version) !== number(action.expected_incident_version)
+          || number(incident.current_plan_version) !== number(action.plan_version)) {
+          throw new CityosApiError(409, 'ACTION_INPUT_STALE', '事件输入已变化，旧确认不能执行。', {
+            currentVersion: number(incident.current_version),
+          })
+        }
+        const [plan] = await transaction`
+          SELECT * FROM cityos.plan_version
+          WHERE incident_id = ${action.incident_id} AND version = ${action.plan_version}
+          FOR UPDATE
+        `
+        if (!plan || plan.status !== 'approved') {
+          throw new CityosApiError(409, 'PLAN_NOT_APPROVED', '方案未批准或已失效。')
+        }
+
+        const preview = action.preview as Row
+        const selectedFacilityId = String(preview.selectedFacilityId)
+        const [facility] = await transaction`
+          SELECT id, status FROM cityos.facility WHERE id = ${selectedFacilityId} FOR UPDATE
+        `
+        if (!facility || facility.status !== 'available') {
+          throw new CityosApiError(409, 'SELECTED_FACILITY_UNAVAILABLE', '所选接收点当前不可用。')
+        }
+        await transaction`
+          UPDATE cityos.action_run
+          SET status = 'running', execute_idempotency_key = ${context.idempotencyKey},
+              execute_request_hash = ${requestHash}
+          WHERE id = ${actionRunId}
+        `
+        const [versionRow] = await transaction`
+          SELECT COALESCE(MAX(version), 0) + 1 AS next_version
+          FROM cityos.task_package WHERE incident_id = ${action.incident_id}
+        `
+        const taskVersion = number(versionRow.next_version)
+        const taskPackageId = `task-${action.incident_id}-v${taskVersion}`
+        const payload = {
+          adapter: 'cityos-medical-simulator',
+          instruction: 'update_receiving_facility',
+          previousFacilityId: String(preview.previousFacilityId),
+          selectedFacilityId,
+          traceId: context.traceId,
+        }
+        const [task] = await transaction`
+          INSERT INTO cityos.task_package (
+            id, incident_id, plan_version, version, mode, simulated,
+            action_run_id, facility_id, status, payload
+          ) VALUES (
+            ${taskPackageId}, ${action.incident_id}, ${action.plan_version}, ${taskVersion},
+            ${incident.mode}, true, ${actionRunId}, ${selectedFacilityId}, 'issued',
+            ${transaction.json(payload)}
+          )
+          RETURNING *
+        `
+        await transaction`
+          INSERT INTO cityos.task_assignment (id, task_package_id, assignee, status, payload)
+          VALUES (
+            ${randomUUID()}, ${taskPackageId}, 'medical-receiving-simulator', 'issued',
+            ${transaction.json({ selectedFacilityId })}
+          )
+        `
+        const result = {
+          actionRunId,
+          status: 'succeeded',
+          taskPackage: taskPackageResponse(task as Row),
+          simulated: true,
+          traceId: context.traceId,
+        }
+        await transaction`
+          UPDATE cityos.action_run
+          SET status = 'succeeded', result = ${transaction.json(result)}, executed_at = now()
+          WHERE id = ${actionRunId}
+        `
+        await transaction`
+          INSERT INTO cityos.decision_lineage (
+            id, incident_id, event_type, actor_id, input_version, output_version,
+            action_run_id, detail
+          ) VALUES (
+            ${randomUUID()}, ${action.incident_id}, 'action.executed', ${context.actorId},
+            ${action.plan_version}, ${taskVersion}, ${actionRunId},
+            ${transaction.json({ taskPackageId, selectedFacilityId, simulated: true })}
+          )
+        `
+        await transaction`
+          INSERT INTO cityos.outbox (aggregate_type, aggregate_id, event_type, payload)
+          VALUES ('task_package', ${taskPackageId}, 'task.issued', ${transaction.json(result)})
+        `
+        return result
+      })
+      if ('expired' in outcome) {
+        throw new CityosApiError(409, 'ACTION_PREVIEW_EXPIRED', 'Action Preview 已过期，不能执行。')
+      }
+      return outcome
+    },
+
+    async recordTaskFeedback(taskPackageId: string, input: TaskFeedbackInput, context: WriteContext) {
+      const requestHash = hashJson(input)
+      return sql.begin(async (transaction) => {
+        await transaction`
+          SELECT pg_advisory_xact_lock(
+            hashtextextended(${`${taskPackageId}:${context.idempotencyKey}:${input.externalFeedbackId}`}, 0::bigint)
+          )
+        `
+        const [duplicate] = await transaction`
+          SELECT * FROM cityos.execution_feedback
+          WHERE external_feedback_id = ${input.externalFeedbackId}
+             OR (task_package_id = ${taskPackageId} AND idempotency_key = ${context.idempotencyKey})
+          ORDER BY created_at ASC
+          LIMIT 1
+        `
+        if (duplicate) {
+          if (duplicate.task_package_id !== taskPackageId || duplicate.request_hash !== requestHash) {
+            throw new CityosApiError(409, 'FEEDBACK_IDEMPOTENCY_CONFLICT', '反馈标识已经用于其他内容。')
+          }
+          return feedbackResponse(duplicate as Row, true)
+        }
+        const [task] = await transaction`
+          SELECT * FROM cityos.task_package WHERE id = ${taskPackageId} FOR UPDATE
+        `
+        if (!task) throw new CityosApiError(404, 'TASK_PACKAGE_NOT_FOUND', '任务包不存在。')
+        if (task.mode !== context.mode) {
+          throw new CityosApiError(409, 'DATA_MODE_MISMATCH', '任务与请求运行模式不一致。')
+        }
+        if (task.status !== input.expectedCurrentStatus) {
+          throw new CityosApiError(409, 'TASK_STATUS_CONFLICT', '任务状态已经变化。')
+        }
+        const transitions: Record<string, string[]> = {
+          issued: ['accepted', 'exception', 'unknown'],
+          accepted: ['en_route', 'exception', 'unknown'],
+          en_route: ['arrived', 'exception', 'unknown'],
+          arrived: ['completed', 'exception', 'unknown'],
+          unknown: ['accepted', 'en_route', 'arrived', 'completed', 'exception'],
+        }
+        if (!(transitions[String(task.status)] ?? []).includes(input.status)) {
+          throw new CityosApiError(409, 'INVALID_FEEDBACK_TRANSITION', '该反馈不符合任务状态机。')
+        }
+        const feedbackId = randomUUID()
+        const [feedback] = await transaction`
+          INSERT INTO cityos.execution_feedback (
+            id, task_package_id, external_feedback_id, status, detail,
+            occurred_at, received_at, actor_id, idempotency_key, request_hash
+          ) VALUES (
+            ${feedbackId}, ${taskPackageId}, ${input.externalFeedbackId}, ${input.status},
+            ${input.detail ?? null}, ${new Date(input.occurredAt * 1000).toISOString()},
+            ${new Date(input.receivedAt * 1000).toISOString()}, ${context.actorId},
+            ${context.idempotencyKey}, ${requestHash}
+          )
+          RETURNING *
+        `
+        await transaction`
+          UPDATE cityos.task_package
+          SET status = ${input.status}, updated_at = now()
+          WHERE id = ${taskPackageId}
+        `
+        await transaction`
+          UPDATE cityos.task_assignment
+          SET status = ${input.status}, updated_at = now()
+          WHERE task_package_id = ${taskPackageId}
+        `
+        await transaction`
+          INSERT INTO cityos.decision_lineage (
+            id, incident_id, event_type, actor_id, output_version, action_run_id, detail
+          ) VALUES (
+            ${randomUUID()}, ${task.incident_id}, 'task.feedback.recorded', ${context.actorId},
+            ${task.version}, ${task.action_run_id},
+            ${transaction.json({
+              taskPackageId,
+              externalFeedbackId: input.externalFeedbackId,
+              from: task.status,
+              to: input.status,
+              detail: input.detail,
+            })}
+          )
+        `
+        return feedbackResponse(feedback as Row)
+      })
+    },
+
     async getIncident(incidentId: string) {
       return incidentResponse(await requireIncident(sql, incidentId))
     },
@@ -353,7 +865,7 @@ export function createMedicalService(sql: CityosDatabase): MedicalService {
         WHERE incident_id = ${incidentId}
         ORDER BY version DESC
       `
-      return { items: tasks }
+      return { items: tasks.map((row) => taskPackageResponse(row as Row)) }
     },
 
     async getDecisionLineage(incidentId: string) {

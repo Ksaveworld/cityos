@@ -1,6 +1,13 @@
 import { randomUUID } from 'node:crypto'
 
-import { parseFacilityStatusChanged, parseMode } from './contracts.ts'
+import {
+  parseAdjustResourcesPreview,
+  parseConfirmActionRun,
+  parseExecuteActionRun,
+  parseFacilityStatusChanged,
+  parseMode,
+  parseTaskFeedback,
+} from './contracts.ts'
 import { getCityosDatabase } from './db.ts'
 import { CityosApiError } from './errors.ts'
 import { createMedicalService } from './medical-service.ts'
@@ -94,6 +101,36 @@ async function routeRequest(request: Request, env: Environment, dependencies: Ru
     const input = parseFacilityStatusChanged(await readJson(request))
     const result = await serviceFor(env, dependencies).ingestAdapterEvent(input, context)
     return jsonResponse(result, 202, { 'X-Trace-Id': traceId })
+  }
+
+  if (request.method === 'POST' && path === '/v1/actions/adjust_resources/preview') {
+    const context = writeContext(request, traceId)
+    const input = parseAdjustResourcesPreview(await readJson(request))
+    const result = await serviceFor(env, dependencies).previewAdjustResources(input, context)
+    return jsonResponse(result, 201, { 'X-Trace-Id': traceId })
+  }
+
+  const actionMatch = /^\/v1\/action-runs\/([^/]+)\/(confirm|execute)$/.exec(path)
+  if (request.method === 'POST' && actionMatch) {
+    const context = writeContext(request, traceId)
+    const actionRunId = decodeURIComponent(actionMatch[1])
+    if (actionMatch[2] === 'confirm') {
+      const result = await serviceFor(env, dependencies)
+        .confirmActionRun(actionRunId, parseConfirmActionRun(await readJson(request)), context)
+      return jsonResponse(result, 200, { 'X-Trace-Id': traceId })
+    }
+    const result = await serviceFor(env, dependencies)
+      .executeActionRun(actionRunId, parseExecuteActionRun(await readJson(request)), context)
+    return jsonResponse(result, 200, { 'X-Trace-Id': traceId })
+  }
+
+  const feedbackMatch = /^\/v1\/tasks\/([^/]+)\/feedback$/.exec(path)
+  if (request.method === 'POST' && feedbackMatch) {
+    const context = writeContext(request, traceId)
+    const taskPackageId = decodeURIComponent(feedbackMatch[1])
+    const result = await serviceFor(env, dependencies)
+      .recordTaskFeedback(taskPackageId, parseTaskFeedback(await readJson(request)), context)
+    return jsonResponse(result, 201, { 'X-Trace-Id': traceId })
   }
 
   throw new CityosApiError(404, 'ROUTE_NOT_FOUND', '接口不存在。')
