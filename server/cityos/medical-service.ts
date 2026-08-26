@@ -109,6 +109,7 @@ function planResponse(row: Row) {
     inputVersion: number(row.input_version),
     inputSnapshotHash: row.input_snapshot_hash,
     status: row.status,
+    blockedReason: row.blocked_reason ?? undefined,
     candidates: row.candidates,
     approvedBy: row.approved_by ?? undefined,
     approvedAt: row.approved_at ? unixSeconds(row.approved_at) : undefined,
@@ -317,9 +318,12 @@ export function createMedicalService(sql: CityosDatabase): MedicalService {
           degraded: true,
           sourceIds: [evidenceId],
         }))
-        if (input.status === 'temporarily_unavailable' && candidates.length < 2) {
-          throw new CityosApiError(409, 'INSUFFICIENT_ALTERNATIVES', '可用替代接收点不足两个。')
-        }
+        // 算不出可行方案不能反过来删掉输入事实。事实照常保存、旧批准照常失效，
+        // 只是这一版方案标记为 blocked，不进入 preview/confirm。
+        const blockedReason = input.status === 'temporarily_unavailable' && candidates.length < 2
+          ? 'INSUFFICIENT_ALTERNATIVES'
+          : null
+        const planStatus = blockedReason === null ? 'draft' : 'blocked'
 
         const nextPlanVersion = number(incident.current_plan_version) + 1
         const snapshot = {
@@ -335,10 +339,11 @@ export function createMedicalService(sql: CityosDatabase): MedicalService {
 
         await transaction`
           INSERT INTO cityos.plan_version (
-            id, incident_id, version, input_version, input_snapshot_hash, status, candidates
+            id, incident_id, version, input_version, input_snapshot_hash, status,
+            candidates, blocked_reason
           ) VALUES (
             ${planId}, ${input.incidentId}, ${nextPlanVersion}, ${nextIncidentVersion},
-            ${snapshotHash}, 'draft', ${transaction.json(candidates)}
+            ${snapshotHash}, ${planStatus}, ${transaction.json(candidates)}, ${blockedReason}
           )
         `
         await transaction`
@@ -358,6 +363,8 @@ export function createMedicalService(sql: CityosDatabase): MedicalService {
           stalePlanVersions: stalePlans.map((row) => number(row.version)),
           planVersion: nextPlanVersion,
           planId,
+          planStatus,
+          blockedReason,
           inputSnapshotHash: snapshotHash,
           candidates,
           traceId: context.traceId,
@@ -371,9 +378,13 @@ export function createMedicalService(sql: CityosDatabase): MedicalService {
             (${randomUUID()}, ${input.incidentId}, 'facility.status.changed', ${context.actorId},
              ${transaction.json([evidenceId])}, ${previousIncidentVersion}, ${nextIncidentVersion},
              ${transaction.json({ facilityId: input.facilityId, from: previousFacilityStatus, to: input.status })}),
-            (${randomUUID()}, ${input.incidentId}, 'plan.recalculated', 'deterministic-engine',
+            (${randomUUID()}, ${input.incidentId},
+             ${blockedReason === null ? 'plan.recalculated' : 'plan.blocked'}, 'deterministic-engine',
              ${transaction.json([evidenceId])}, ${nextIncidentVersion}, ${nextPlanVersion},
-             ${transaction.json({ planId, snapshotHash, candidates, stalePlanVersions: result.stalePlanVersions })})
+             ${transaction.json({
+               planId, snapshotHash, candidates, blockedReason,
+               stalePlanVersions: result.stalePlanVersions,
+             })})
         `
         await transaction`
           INSERT INTO cityos.outbox (aggregate_type, aggregate_id, event_type, payload)
@@ -442,6 +453,10 @@ export function createMedicalService(sql: CityosDatabase): MedicalService {
           FOR UPDATE
         `
         if (!plan) throw new CityosApiError(404, 'PLAN_NOT_FOUND', '方案版本不存在。')
+        if (plan.status === 'blocked') {
+          throw new CityosApiError(409, 'PLAN_BLOCKED',
+            `当前输入下没有可行方案（${String(plan.blocked_reason)}），不能生成预览。`, { retryable: false })
+        }
         if (plan.status !== 'draft' || number(plan.input_version) !== input.expectedIncidentVersion) {
           throw new CityosApiError(409, 'PLAN_NOT_APPROVABLE', '方案已过期或输入版本不一致。')
         }

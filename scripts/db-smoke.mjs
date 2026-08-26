@@ -252,15 +252,55 @@ try {
   const drainAfterLost = await drainMedicalOutbox(sql, createSimulatedMedicalAdapter({}), { limit: 5 })
   check('24 unknown 之后不会被自动重发', drainAfterLost.claimed === 0, JSON.stringify(drainAfterLost))
 
+  // ---- 场景三：算不出方案时，事实必须留下 ----
+  // 此时 shiyi 与 red-cross 都不可用，只剩 gz 一家，替代不足两个。
+  const blockEvent = facilityEvent({
+    eventId: 'evt-smoke-block', facilityId: 'facility-gz-first-affiliated',
+    aggregateVersion: 2, idempotencyKey: 'idem-adapter-block',
+    source: { externalEventId: 'ext-smoke-block', sourceSequence: 2 },
+  })
+  const blocked = await call('POST', '/v1/adapter-events', { body: blockEvent, key: blockEvent.idempotencyKey })
+  check('25 无可行方案时请求仍然成功', blocked.status === 202,
+    `status=${blocked.status} code=${blocked.json.error?.code}`)
+
+  const [blockFacility] = await sql`
+    SELECT status FROM cityos.facility WHERE id = 'facility-gz-first-affiliated'
+  `
+  check('26 医院下线的事实没有被回滚', blockFacility.status === 'temporarily_unavailable',
+    `status=${blockFacility.status}`)
+
+  const [blockEvidence] = await sql`
+    SELECT count(*) AS n FROM cityos.evidence_source WHERE external_event_id = 'ext-smoke-block'
+  `
+  check('27 来源记录没有被回滚', Number(blockEvidence.n) === 1, `evidence=${blockEvidence.n}`)
+
+  const blockedPlans = await call('GET', `/v1/incidents/${INCIDENT}/plans`)
+  const latestPlan = blockedPlans.json.items[0]
+  check('28 生成明确的无可行方案版本',
+    latestPlan.status === 'blocked' && latestPlan.blockedReason === 'INSUFFICIENT_ALTERNATIVES',
+    `status=${latestPlan.status} reason=${latestPlan.blockedReason}`)
+
+  const blockedPreview = await call('POST', '/v1/actions/adjust_resources/preview', {
+    key: 'idem-preview-blocked',
+    body: {
+      incidentId: INCIDENT, planVersion: latestPlan.version,
+      expectedIncidentVersion: latestPlan.inputVersion,
+      previousFacilityId: 'facility-gz-first-affiliated',
+      candidateFacilityIds: ['facility-shiyi'], selectedFacilityId: 'facility-shiyi',
+    },
+  })
+  check('29 blocked 方案不能进入预览', blockedPreview.status === 409
+    && blockedPreview.json.error?.code === 'PLAN_BLOCKED', `code=${blockedPreview.json.error?.code}`)
+
   // ---- 边界 ----
   const liveMode = await call('POST', '/v1/adapter-events', { body: { ...event, mode: 'live' }, key: 'idem-live' })
-  check('25 运行模式不一致被拒', liveMode.status === 409, `code=${liveMode.json.error?.code}`)
+  check('30 运行模式不一致被拒', liveMode.status === 409, `code=${liveMode.json.error?.code}`)
 
   const noKey = await call('POST', '/v1/adapter-events', { body: event })
-  check('26 缺 Idempotency-Key 被拒', noKey.status === 400, `code=${noKey.json.error?.code}`)
+  check('31 缺 Idempotency-Key 被拒', noKey.status === 400, `code=${noKey.json.error?.code}`)
 
   const degraded = await call('POST', '/v1/adapter-events', { body: event, key: 'idem-x', mode: 'live-degraded' })
-  check('27 降级模式只读', degraded.status === 409, `code=${degraded.json.error?.code}`)
+  check('32 降级模式只读', degraded.status === 409, `code=${degraded.json.error?.code}`)
 
   // ---- 审计链 ----
   const lineage = await call('GET', `/v1/incidents/${INCIDENT}/decision-lineage`)
@@ -271,14 +311,14 @@ try {
     'task.feedback.recorded',
   ]
   const missing = required.filter((t) => !types.includes(t))
-  check('28 审计链覆盖全链路', missing.length === 0, missing.length ? `缺 ${missing.join(',')}` : `${types.length} 条`)
+  check('33 审计链覆盖全链路', missing.length === 0, missing.length ? `缺 ${missing.join(',')}` : `${types.length} 条`)
 
   const [delivery] = await sql`
     SELECT count(*) FILTER (WHERE status = 'pending') AS pending,
            count(*) FILTER (WHERE status = 'done') AS done
     FROM cityos.outbox WHERE event_type = 'action.deliver'
   `
-  check('29 投递流没有堆积', Number(delivery.pending) === 0, `pending=${delivery.pending} done=${delivery.done}`)
+  check('34 投递流没有堆积', Number(delivery.pending) === 0, `pending=${delivery.pending} done=${delivery.done}`)
 
   // incident.plan.recalculated 目前没有消费者，会无限堆积。等前端实时推送落地后
   // 由推送 worker 消费；在那之前这里只把积压量报出来，不假装它已经被处理。
