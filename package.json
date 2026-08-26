@@ -16,6 +16,7 @@
     "db:seed": "node scripts/db-seed.mjs",
     "db:import-public-poi": "node scripts/db-import-public-poi.mjs",
     "db:smoke": "node scripts/db-smoke.mjs",
+    "auth:provision": "node scripts/auth-provision.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

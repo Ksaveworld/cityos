@@ -8,6 +8,16 @@ import {
   parseMode,
   parseTaskFeedback,
 } from './contracts.ts'
+import {
+  CAPABILITIES,
+  createAuthService,
+  extractCredential,
+  hasCapability,
+  parseLoginInput,
+  type AuthService,
+  type Capability,
+  type Principal,
+} from './auth.ts'
 import { getCityosDatabase } from './db.ts'
 import { CityosApiError } from './errors.ts'
 import { createMedicalService } from './medical-service.ts'
@@ -19,6 +29,7 @@ const MAX_BODY_BYTES = 128 * 1024
 
 interface RuntimeDependencies {
   service?: MedicalService
+  authService?: AuthService
   randomId?: () => string
 }
 
@@ -49,13 +60,13 @@ function requireHeader(request: Request, name: string) {
   return value
 }
 
-function writeContext(request: Request, traceId: string): WriteContext {
+function writeContext(request: Request, traceId: string, principal: Principal | null): WriteContext {
   const mode = parseMode(request.headers.get('x-data-mode'))
   if (mode === 'live-degraded') {
     throw new CityosApiError(409, 'DEGRADED_MODE_READ_ONLY', '降级模式只允许读取，不能执行写操作。')
   }
   return {
-    actorId: requireHeader(request, 'X-Actor-Id'),
+    actorId: principal?.actorId ?? requireHeader(request, 'X-Actor-Id'),
     idempotencyKey: requireHeader(request, 'Idempotency-Key'),
     mode,
     traceId,
@@ -82,10 +93,57 @@ function serviceFor(env: Environment, dependencies: RuntimeDependencies) {
   return dependencies.service ?? createMedicalService(getCityosDatabase(env))
 }
 
+function authFor(env: Environment, dependencies: RuntimeDependencies) {
+  return dependencies.authService ?? createAuthService(getCityosDatabase(env))
+}
+
+function authMode(env: Environment) {
+  const mode = env.CITYOS_AUTH_MODE?.trim().toLowerCase() ?? 'optional'
+  if (!['optional', 'required'].includes(mode)) {
+    throw new CityosApiError(503, 'INVALID_AUTH_CONFIGURATION', 'CITYOS_AUTH_MODE 必须是 optional 或 required。')
+  }
+  return mode as 'optional' | 'required'
+}
+
+async function authorize(
+  request: Request,
+  env: Environment,
+  dependencies: RuntimeDependencies,
+  capability: Capability,
+) {
+  const rawCredential = extractCredential(request)
+  if (!rawCredential && authMode(env) === 'optional') return null
+  if (!rawCredential) throw new CityosApiError(401, 'AUTH_REQUIRED', '需要登录或 API Key。')
+  const principal = await authFor(env, dependencies).authenticate(rawCredential)
+  if (!principal) throw new CityosApiError(401, 'INVALID_CREDENTIALS', '登录态或 API Key 无效。')
+  if (!hasCapability(principal, capability)) {
+    throw new CityosApiError(403, 'FORBIDDEN', `当前角色缺少能力：${capability}。`)
+  }
+  return principal
+}
+
 async function routeRequest(request: Request, env: Environment, dependencies: RuntimeDependencies, traceId: string) {
   const path = apiPath(request)
+  if (request.method === 'POST' && path === '/v1/auth/login') {
+    const result = await authFor(env, dependencies).login(parseLoginInput(await readJson(request)))
+    return jsonResponse(result, 200, { 'X-Trace-Id': traceId })
+  }
+  if (request.method === 'GET' && path === '/v1/auth/me') {
+    const rawCredential = extractCredential(request)
+    if (!rawCredential) throw new CityosApiError(401, 'AUTH_REQUIRED', '需要登录或 API Key。')
+    const principal = await authFor(env, dependencies).authenticate(rawCredential)
+    if (!principal) throw new CityosApiError(401, 'INVALID_CREDENTIALS', '登录态或 API Key 无效。')
+    return jsonResponse({ principal }, 200, { 'X-Trace-Id': traceId })
+  }
+  if (request.method === 'POST' && path === '/v1/auth/logout') {
+    const rawCredential = extractCredential(request)
+    if (rawCredential) await authFor(env, dependencies).revoke(rawCredential)
+    return jsonResponse({ status: 'ok' }, 200, { 'X-Trace-Id': traceId })
+  }
+
   const incidentMatch = /^\/v1\/incidents\/([^/]+)(?:\/(context|plans|task-packages|decision-lineage|board))?$/.exec(path)
   if (request.method === 'GET' && incidentMatch) {
+    await authorize(request, env, dependencies, CAPABILITIES.incidentRead)
     const incidentId = decodeURIComponent(incidentMatch[1])
     const resource = incidentMatch[2]
     const service = serviceFor(env, dependencies)
@@ -98,14 +156,16 @@ async function routeRequest(request: Request, env: Environment, dependencies: Ru
   }
 
   if (request.method === 'POST' && path === '/v1/adapter-events') {
-    const context = writeContext(request, traceId)
+    const principal = await authorize(request, env, dependencies, CAPABILITIES.adapterEventWrite)
+    const context = writeContext(request, traceId, principal)
     const input = parseFacilityStatusChanged(await readJson(request))
     const result = await serviceFor(env, dependencies).ingestAdapterEvent(input, context)
     return jsonResponse(result, 202, { 'X-Trace-Id': traceId })
   }
 
   if (request.method === 'POST' && path === '/v1/actions/adjust_resources/preview') {
-    const context = writeContext(request, traceId)
+    const principal = await authorize(request, env, dependencies, CAPABILITIES.adjustResourcesPreview)
+    const context = writeContext(request, traceId, principal)
     const input = parseAdjustResourcesPreview(await readJson(request))
     const result = await serviceFor(env, dependencies).previewAdjustResources(input, context)
     return jsonResponse(result, 201, { 'X-Trace-Id': traceId })
@@ -113,6 +173,7 @@ async function routeRequest(request: Request, env: Environment, dependencies: Ru
 
   const actionRunReadMatch = /^\/v1\/action-runs\/([^/]+)$/.exec(path)
   if (request.method === 'GET' && actionRunReadMatch) {
+    await authorize(request, env, dependencies, CAPABILITIES.incidentRead)
     const actionRunId = decodeURIComponent(actionRunReadMatch[1])
     const result = await serviceFor(env, dependencies).getActionRun(actionRunId)
     return jsonResponse(result, 200, { 'X-Trace-Id': traceId })
@@ -120,13 +181,16 @@ async function routeRequest(request: Request, env: Environment, dependencies: Ru
 
   const actionMatch = /^\/v1\/action-runs\/([^/]+)\/(confirm|execute)$/.exec(path)
   if (request.method === 'POST' && actionMatch) {
-    const context = writeContext(request, traceId)
     const actionRunId = decodeURIComponent(actionMatch[1])
     if (actionMatch[2] === 'confirm') {
+      const principal = await authorize(request, env, dependencies, CAPABILITIES.adjustResourcesConfirm)
+      const context = writeContext(request, traceId, principal)
       const result = await serviceFor(env, dependencies)
         .confirmActionRun(actionRunId, parseConfirmActionRun(await readJson(request)), context)
       return jsonResponse(result, 200, { 'X-Trace-Id': traceId })
     }
+    const principal = await authorize(request, env, dependencies, CAPABILITIES.adjustResourcesExecute)
+    const context = writeContext(request, traceId, principal)
     // 202：只表示已受理并进入待发送，不表示已送达。终态由前端轮询 GET /v1/action-runs/{id}。
     const result = await serviceFor(env, dependencies)
       .executeActionRun(actionRunId, parseExecuteActionRun(await readJson(request)), context)
@@ -135,7 +199,8 @@ async function routeRequest(request: Request, env: Environment, dependencies: Ru
 
   const feedbackMatch = /^\/v1\/tasks\/([^/]+)\/feedback$/.exec(path)
   if (request.method === 'POST' && feedbackMatch) {
-    const context = writeContext(request, traceId)
+    const principal = await authorize(request, env, dependencies, CAPABILITIES.taskFeedbackWrite)
+    const context = writeContext(request, traceId, principal)
     const taskPackageId = decodeURIComponent(feedbackMatch[1])
     const result = await serviceFor(env, dependencies)
       .recordTaskFeedback(taskPackageId, parseTaskFeedback(await readJson(request)), context)
