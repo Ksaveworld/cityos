@@ -1,0 +1,65 @@
+name: CityOS Quality Gate
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cityos-quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: cityos
+          POSTGRES_USER: cityos
+          POSTGRES_PASSWORD: cityos_dev
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U cityos -d cityos"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 20
+
+    env:
+      CITYOS_DATABASE_URL: postgres://cityos:cityos_dev@127.0.0.1:55432/cityos
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Backend tests
+        run: npm run test:backend
+
+      - name: Agent and chat tests
+        run: npm run test:chat
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Production build
+        run: npm run build
+
+      - name: PostgreSQL acceptance gate
+        run: npm run db:smoke

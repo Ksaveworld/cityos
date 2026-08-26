@@ -126,6 +126,8 @@ try {
   check('1 重复迁移全部 skip', !second.includes('applied'), second.trim().split('\n').filter((l) => l.startsWith('skip')).join(' '))
   execFileSync('node', ['scripts/db-seed.mjs'], { stdio: 'pipe', env: { ...process.env, CITYOS_DATABASE_URL: DATABASE_URL } })
   execFileSync('node', ['scripts/db-seed.mjs'], { stdio: 'pipe', env: { ...process.env, CITYOS_DATABASE_URL: DATABASE_URL } })
+  execFileSync('node', ['scripts/db-import-public-poi.mjs'], { stdio: 'pipe', env: { ...process.env, CITYOS_DATABASE_URL: DATABASE_URL } })
+  execFileSync('node', ['scripts/db-import-public-poi.mjs'], { stdio: 'pipe', env: { ...process.env, CITYOS_DATABASE_URL: DATABASE_URL } })
 
   const sql = getCityosDatabase(env)
   const [counts] = await sql`
@@ -134,6 +136,18 @@ try {
   `
   check('2 重复种子不翻倍', Number(counts.incidents) === 1 && Number(counts.facilities) === 3,
     `incident=${counts.incidents} facility=${counts.facilities}`)
+
+  const [publicData] = await sql`
+    SELECT
+      (SELECT count(*) FROM cityos.dataset_snapshot) AS snapshots,
+      (SELECT count(*) FROM cityos.reference_poi) AS pois,
+      (SELECT count(*) FROM cityos.facility WHERE reference_poi_id IS NOT NULL) AS linked_facilities
+  `
+  check('2a 公开点位重复导入不翻倍',
+    Number(publicData.snapshots) === 1 && Number(publicData.pois) === 134,
+    `snapshot=${publicData.snapshots} poi=${publicData.pois}`)
+  check('2b 运行设施只关联公开点位', Number(publicData.linked_facilities) === 3,
+    `linked=${publicData.linked_facilities}`)
 
   // ---- 事实接入 ----
   const event = facilityEvent({})
@@ -157,6 +171,11 @@ try {
   const context = await call('GET', `/v1/incidents/${INCIDENT}/context`)
   const shiyi = context.json.facilities.find((f) => f.id === 'facility-shiyi')
   check('6 迟到事件没有改写事实', shiyi.status === 'temporarily_unavailable', `status=${shiyi.status}`)
+  check('6a 公开位置与模拟运行状态分开返回',
+    shiyi.publicReference?.snapshot?.sourceSystem === 'openstreetmap-overpass-snapshot'
+      && shiyi.publicReference?.snapshot?.capturedAt === 1786665600
+      && shiyi.source?.sourceSystem === 'medical-adapter-sim',
+    `public=${shiyi.publicReference?.snapshot?.sourceSystem} runtime=${shiyi.source?.sourceSystem}`)
 
   const plans = await call('GET', `/v1/incidents/${INCIDENT}/plans`)
   check('7 旧批准方案已失效', plans.json.items.find((p) => p.version === 1)?.status === 'stale')
