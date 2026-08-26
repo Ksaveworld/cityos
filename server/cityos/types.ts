@@ -69,6 +69,7 @@ export interface MedicalService {
   recordTaskFeedback(taskPackageId: string, input: TaskFeedbackInput, context: WriteContext): Promise<unknown>
   getIncident(incidentId: string): Promise<unknown>
   getContext(incidentId: string): Promise<unknown>
+  getActionRun(actionRunId: string): Promise<unknown>
   getPlans(incidentId: string): Promise<unknown>
   getTaskPackages(incidentId: string): Promise<unknown>
   getDecisionLineage(incidentId: string): Promise<unknown>

@@ -2,7 +2,9 @@ import type { IncomingMessage } from 'node:http'
 
 import type { Plugin } from 'vite'
 
+import { getCityosDatabase } from './db.ts'
 import { handleCityosRequest } from './http.ts'
+import { createSimulatedMedicalAdapter, startMedicalOutboxWorker, type OutboxWorkerHandle } from './worker.ts'
 
 type Environment = Record<string, string | undefined>
 
@@ -32,6 +34,17 @@ export function cityosApiDevPlugin(env: Environment): Plugin {
     name: 'cityos-medical-api',
     apply: 'serve',
     configureServer(server) {
+      // worker 与 API 同进程启动，避免漏起导致 ActionRun 永远停在 queued。
+      let worker: OutboxWorkerHandle | null = null
+      try {
+        worker = startMedicalOutboxWorker(getCityosDatabase(env), createSimulatedMedicalAdapter(env))
+      } catch (error) {
+        console.warn('[cityos] outbox worker 未启动：', error instanceof Error ? error.message : error)
+      }
+      server.httpServer?.on('close', () => {
+        void worker?.stop()
+      })
+
       server.middlewares.use(async (request, response, next) => {
         const pathname = new URL(request.url ?? '/', 'http://vite.local').pathname
         if (!pathname.startsWith('/v1/')) return next()

@@ -13,6 +13,7 @@ function fakeService(overrides: Partial<MedicalService> = {}): MedicalService {
     recordTaskFeedback: async (taskPackageId, input, context) => ({ taskPackageId, input, context }),
     getIncident: async (incidentId) => ({ id: incidentId }),
     getContext: async (incidentId) => ({ incident: { id: incidentId }, facilities: [] }),
+    getActionRun: async (actionRunId) => ({ actionRunId, status: 'queued' }),
     getPlans: async () => ({ items: [] }),
     getTaskPackages: async () => ({ items: [] }),
     getDecisionLineage: async () => ({ items: [] }),
@@ -188,7 +189,8 @@ test('confirm and execute use separate explicit expected-state contracts', async
     { service: fakeService(), randomId: () => 'trace-execute' },
   )
   assert.equal(confirm.status, 200)
-  assert.equal(execute.status, 200)
+  // 202 表示已受理并进入待发送，不表示已送达。
+  assert.equal(execute.status, 202)
   assert.equal((await confirm.json() as { input: { expectedPlanVersion: number } }).input.expectedPlanVersion, 2)
   assert.equal((await execute.json() as { input: { expectedStatus: string } }).input.expectedStatus, 'confirmed')
 })

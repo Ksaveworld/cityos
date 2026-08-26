@@ -50,7 +50,9 @@ function actionRunResponse(row: Row, duplicate = false) {
     selectedFacilityId: preview.selectedFacilityId,
     confirmedBy: row.confirmed_by ?? undefined,
     confirmedAt: row.confirmed_at ? unixSeconds(row.confirmed_at) : undefined,
+    executedAt: row.executed_at ? unixSeconds(row.executed_at) : undefined,
     result: row.result ?? undefined,
+    failure: row.failure ?? undefined,
     duplicate,
   }
 }
@@ -608,7 +610,8 @@ export function createMedicalService(sql: CityosDatabase): MedicalService {
           SELECT * FROM cityos.action_run WHERE id = ${actionRunId} FOR UPDATE
         `
         if (!action) throw new CityosApiError(404, 'ACTION_RUN_NOT_FOUND', 'ActionRun 不存在。')
-        if (action.execute_idempotency_key === context.idempotencyKey && action.status === 'succeeded') {
+        // 执行是异步的，同键重放可能落在 queued 和任一终态上，一律返回已存结果。
+        if (action.execute_idempotency_key === context.idempotencyKey) {
           if (action.execute_request_hash !== requestHash) {
             throw new CityosApiError(409, 'IDEMPOTENCY_KEY_REUSED', '该幂等键已经用于不同的执行请求。')
           }
@@ -677,7 +680,7 @@ export function createMedicalService(sql: CityosDatabase): MedicalService {
         }
         await transaction`
           UPDATE cityos.action_run
-          SET status = 'running', execute_idempotency_key = ${context.idempotencyKey},
+          SET status = 'queued', execute_idempotency_key = ${context.idempotencyKey},
               execute_request_hash = ${requestHash}
           WHERE id = ${actionRunId}
         `
@@ -712,16 +715,17 @@ export function createMedicalService(sql: CityosDatabase): MedicalService {
             ${transaction.json({ selectedFacilityId })}
           )
         `
+        // 任务包已生成即「待发送」；投递由 worker 完成，落终态前不算已送达。
         const result = {
           actionRunId,
-          status: 'succeeded',
+          status: 'queued',
           taskPackage: taskPackageResponse(task as Row),
           simulated: true,
           traceId: context.traceId,
         }
         await transaction`
           UPDATE cityos.action_run
-          SET status = 'succeeded', result = ${transaction.json(result)}, executed_at = now()
+          SET result = ${transaction.json(result)}
           WHERE id = ${actionRunId}
         `
         await transaction`
@@ -729,14 +733,23 @@ export function createMedicalService(sql: CityosDatabase): MedicalService {
             id, incident_id, event_type, actor_id, input_version, output_version,
             action_run_id, detail
           ) VALUES (
-            ${randomUUID()}, ${action.incident_id}, 'action.executed', ${context.actorId},
+            ${randomUUID()}, ${action.incident_id}, 'action.queued', ${context.actorId},
             ${action.plan_version}, ${taskVersion}, ${actionRunId},
             ${transaction.json({ taskPackageId, selectedFacilityId, simulated: true })}
           )
         `
         await transaction`
           INSERT INTO cityos.outbox (aggregate_type, aggregate_id, event_type, payload)
-          VALUES ('task_package', ${taskPackageId}, 'task.issued', ${transaction.json(result)})
+          VALUES ('action_run', ${actionRunId}, 'action.deliver', ${transaction.json({
+            actionRunId,
+            taskPackageId,
+            incidentId: String(action.incident_id),
+            previousFacilityId: String(preview.previousFacilityId),
+            selectedFacilityId,
+            // 下游幂等键。同一个 ActionRun 无论投递几次，对下游都是同一个请求。
+            externalRequestId: actionRunId,
+            traceId: context.traceId,
+          })})
         `
         return result
       })
@@ -846,6 +859,14 @@ export function createMedicalService(sql: CityosDatabase): MedicalService {
         incident: incidentResponse(incident),
         facilities: facilities.map((row) => facilityResponse(row as Row)),
       }
+    },
+
+    async getActionRun(actionRunId: string) {
+      const [row] = await sql`
+        SELECT * FROM cityos.action_run WHERE id = ${actionRunId}
+      `
+      if (!row) throw new CityosApiError(404, 'ACTION_RUN_NOT_FOUND', 'ActionRun 不存在。')
+      return actionRunResponse(row as Row)
     },
 
     async getPlans(incidentId: string) {

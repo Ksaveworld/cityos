@@ -110,6 +110,13 @@ async function routeRequest(request: Request, env: Environment, dependencies: Ru
     return jsonResponse(result, 201, { 'X-Trace-Id': traceId })
   }
 
+  const actionRunReadMatch = /^\/v1\/action-runs\/([^/]+)$/.exec(path)
+  if (request.method === 'GET' && actionRunReadMatch) {
+    const actionRunId = decodeURIComponent(actionRunReadMatch[1])
+    const result = await serviceFor(env, dependencies).getActionRun(actionRunId)
+    return jsonResponse(result, 200, { 'X-Trace-Id': traceId })
+  }
+
   const actionMatch = /^\/v1\/action-runs\/([^/]+)\/(confirm|execute)$/.exec(path)
   if (request.method === 'POST' && actionMatch) {
     const context = writeContext(request, traceId)
@@ -119,9 +126,10 @@ async function routeRequest(request: Request, env: Environment, dependencies: Ru
         .confirmActionRun(actionRunId, parseConfirmActionRun(await readJson(request)), context)
       return jsonResponse(result, 200, { 'X-Trace-Id': traceId })
     }
+    // 202：只表示已受理并进入待发送，不表示已送达。终态由前端轮询 GET /v1/action-runs/{id}。
     const result = await serviceFor(env, dependencies)
       .executeActionRun(actionRunId, parseExecuteActionRun(await readJson(request)), context)
-    return jsonResponse(result, 200, { 'X-Trace-Id': traceId })
+    return jsonResponse(result, 202, { 'X-Trace-Id': traceId })
   }
 
   const feedbackMatch = /^\/v1\/tasks\/([^/]+)\/feedback$/.exec(path)
