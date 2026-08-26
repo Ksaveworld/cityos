@@ -301,7 +301,9 @@ export function createMedicalService(sql: CityosDatabase): MedicalService {
           SELECT id, name, status, demo_eta_seconds, demo_eta_low_seconds,
                  demo_eta_high_seconds, demo_risk_score
           FROM cityos.facility
-          WHERE id <> ${input.facilityId} AND status = 'available'
+          -- 只按状态筛选。下线的接收点已经被 status 排除；再排除「事件所指的那家」
+          -- 会让恢复事件把刚恢复的接收点挡在自己触发的这次重算之外。
+          WHERE status = 'available'
           ORDER BY demo_eta_seconds ASC, demo_risk_score ASC, id ASC
           LIMIT 2
         `
