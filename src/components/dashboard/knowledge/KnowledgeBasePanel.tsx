@@ -20,7 +20,7 @@ import { readKnowledgeRailWidth } from './knowledgeRailState'
 
 const ReviewReportOverlay = lazy(() => import('../review/ReviewReportOverlay'))
 
-const DOMAIN_FILTERS = ['全部', '119 消防', '110 警情', '120 医疗', '交通协同', '重大布防'] as const
+const DOMAIN_FILTERS = ['全部', '119 消防', '110 警情', '120 医疗', '交通协同', '市容秩序', '重大布防'] as const
 type DomainFilter = (typeof DOMAIN_FILTERS)[number]
 type KnowledgeView = 'chat' | 'archive'
 

@@ -16,6 +16,7 @@ export type PoiKind =
   | 'camera'
   | 'traffic_signal'
   | 'road_closure'
+  | 'urban_order'
   | 'hydrant'
   | 'shelter'
   | 'event'
@@ -57,6 +58,7 @@ export const POI_SPECS: Record<PoiKind, PoiSpec> = {
   camera: { glyph: GLYPH('videocam'), color: '#6E56CF', category: '上游视频点位' },
   traffic_signal: { glyph: GLYPH('traffic'), color: '#D98200', category: '交通信号' },
   road_closure: { glyph: GLYPH('block'), color: '#B42318', category: '道路封闭' },
+  urban_order: { glyph: GLYPH('campaign'), color: '#C26A2E', category: '市容巡查' },
   hydrant: { glyph: GLYPH('fire_hydrant'), color: '#C2410C', category: '消火栓' },
   shelter: { glyph: GLYPH('night_shelter'), color: '#2A9D5C', category: '避难场所' },
   event: { glyph: GLYPH('emergency'), color: '#E5484D', category: '事件锚点' },

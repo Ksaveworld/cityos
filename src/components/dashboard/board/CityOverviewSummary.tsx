@@ -16,8 +16,8 @@ const ALERT_LANES: Array<{ domain: string; label: string; color: string }> = [
   { domain: '110', label: '110', color: '#2F6FDA' },
   { domain: '120', label: '120', color: '#0E9AA7' },
   { domain: '交通', label: '交通', color: '#B8860B' },
+  { domain: '市容秩序', label: '市容', color: '#C26A2E' },
   { domain: '布防', label: '布防', color: '#7C3AED' },
-  { domain: '气象', label: '气象', color: '#3B82F6' },
 ]
 
 const SEVERITY_DOT: Record<CityAlert['severity'], { size: number; label: string }> = {

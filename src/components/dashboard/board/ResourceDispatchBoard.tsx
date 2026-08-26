@@ -8,7 +8,7 @@ import {
   type UnitStatus,
 } from './boardData'
 
-const KIND_FILTERS = ['全部', '消防', '公安', '医疗', '交管'] as const
+const KIND_FILTERS = ['全部', '消防', '公安', '医疗', '交管', '市容'] as const
 type KindFilter = (typeof KIND_FILTERS)[number]
 
 const SORTS = [
@@ -104,7 +104,7 @@ export const ResourceDispatchBoard = memo(function ResourceDispatchBoard({
           })}
         </div>
 
-        <div className="mt-2 grid grid-cols-5 gap-1 rounded-lg bg-sunken p-1">
+        <div className="mt-2 grid grid-cols-6 gap-1 rounded-lg bg-sunken p-1">
           {KIND_FILTERS.map((item) => (
             <button
               key={item}

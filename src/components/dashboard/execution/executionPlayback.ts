@@ -2,7 +2,7 @@ export type ExecutionBranch = 'normal' | 'blocked'
 
 export type ExecutionTransport = 'ready' | 'playing' | 'paused' | 'blocked' | 'ended'
 
-export type ExecutionUnitKind = 'fire' | 'police' | 'medical'
+export type ExecutionUnitKind = 'fire' | 'police' | 'medical' | 'traffic'
 
 export type ExecutionRouteRole = 'primary' | 'secondary' | 'medical'
 

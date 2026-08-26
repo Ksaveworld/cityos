@@ -51,8 +51,8 @@ export function CityOverviewLoading() {
         <aside className="flex min-h-0 flex-col gap-2">
           <section className="flex min-h-0 flex-1 flex-col rounded-xl border border-line bg-surface-card p-2.5 shadow-panel">
             <span className={`${BLOCK} mb-2 h-3 w-24`} />
-            <div className="grid min-h-0 flex-1 grid-rows-5 gap-1.5">
-              {Array.from({ length: 5 }, (_, index) => (
+            <div className="grid min-h-0 flex-1 grid-rows-6 gap-1.5">
+              {Array.from({ length: 6 }, (_, index) => (
                 <div key={index} className="flex items-center gap-2 rounded-md px-1">
                   <span className={`${BLOCK} h-4 w-8`} />
                   <span className={`${BLOCK} h-3 w-12`} />

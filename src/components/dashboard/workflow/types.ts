@@ -1,4 +1,4 @@
-export type DomainId = 'fire' | 'police' | 'medical' | 'traffic' | 'major'
+export type DomainId = 'fire' | 'police' | 'medical' | 'traffic' | 'urban_order' | 'major'
 
 export type InputMode = 'stream' | 'manual'
 

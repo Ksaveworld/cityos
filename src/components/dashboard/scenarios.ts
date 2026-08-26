@@ -21,7 +21,7 @@ export const CHAIN_STEPS: Array<{
 ]
 
 export type StepState = 'complete' | 'summary' | 'not-run' | 'phase-1'
-export type ScenarioKind = 'fire' | 'police' | 'medical' | 'traffic' | 'major' | 'other'
+export type ScenarioKind = 'fire' | 'police' | 'medical' | 'traffic' | 'urban_order' | 'major' | 'other'
 
 export interface DashboardScenario {
   id: string
@@ -174,6 +174,31 @@ export const DASHBOARD_SCENARIOS: DashboardScenario[] = [
       '生成现场防护、医疗待命、清障联络与绕行提示的演示任务草案。',
       '反馈样例展示事故点防护、清障确认与绕行提示三个状态字段。',
       '回看路段影响、协同顺序与人工门禁；报告不代表真实交通事件记录。',
+    ],
+  },
+  {
+    id: 'yuexiu-urban-order',
+    tab: '市容秩序',
+    title: '北京路商圈夜市占道 + 消防通道受阻',
+    subtitle: '演示市容秩序事件 · 多模态线索待人工核实',
+    address: '越秀区北京路商圈 · 精确点位为演示',
+    kind: 'urban_order',
+    typeLabel: '市容秩序',
+    statusLabel: '待人工决策',
+    updatedAt: '15:06',
+    origin: 'simulated',
+    originNote: '事件时序、精确点位、占道范围、消防通道状态、多模态信号、资源与 ETA 均为演示或待核实',
+    states: ['summary', 'summary', 'summary', 'summary', 'summary', 'summary', 'summary', 'summary', 'summary'],
+    notes: [
+      '商户图片、巡查语音与商圈视频均为模拟待核实线索，只进入 AI Brief 前置研判。',
+      '线索归并为北京路夜市占道与消防通道受阻演示事件，尚未形成现场事实。',
+      '公开底图只提供道路参考；占道边界、消防通道入口与资源状态均待人工核实。',
+      'AI Brief 分开呈现演示输入、待核实证据与当前信息缺口，不把多模态线索直接写成结论。',
+      '比较“先恢复消防通道再疏导”和“分区疏导、错峰清理”两套演示方案。',
+      '占道范围、通道状态、主责单元与协同动作必须经人工确认。',
+      '人工批准后才生成市容、消防与属地协同任务草案，不连接真实下发系统。',
+      '反馈仅模拟到场、通道复核、商户疏导与清理进度。',
+      '报告保留模拟参数、待核实证据、人工门禁与版本变更，不代表真实执法记录。',
     ],
   },
   {

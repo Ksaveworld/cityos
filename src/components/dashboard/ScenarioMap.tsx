@@ -5,7 +5,7 @@ import type { MapLayerVisibility } from './mapLayers'
 import type { PoiKind } from './map/poiCatalog'
 import { OriginMark } from './Provenance'
 
-export type ScenarioMapVariant = 'routine' | 'police' | 'medical' | 'traffic' | 'major'
+export type ScenarioMapVariant = 'routine' | 'police' | 'medical' | 'traffic' | 'urban_order' | 'major'
 
 export type ScenarioPointKind = 'event' | 'resource' | 'source' | 'camera' | 'entry'
 export type ScenarioPathLayer = 'traffic' | 'routes'
@@ -24,6 +24,8 @@ export interface ScenarioMapPoint {
    * 只有 resource 必须显式标注，其余按 kind 兜底，见 map/poiCatalog.ts。
    */
   poi?: PoiKind
+  /** 仅作为路网求路经由点，不在地图上绘制 POI。 */
+  hidden?: boolean
 }
 
 export interface ScenarioPointRouteRequest {
@@ -31,6 +33,10 @@ export interface ScenarioPointRouteRequest {
   fromLabel: string
   /** 引用同场景 points[].label，必须匹配到唯一一个点位。 */
   toLabel: string
+  /** 可选经由点，按顺序沿 OSM 路网分段求路后合并。 */
+  viaLabels?: string[]
+  /** 路线图例与诊断使用的人类可读名称。 */
+  displayLabel?: string
   color: [number, number, number, number]
   layer: 'routes'
   width: number
@@ -80,6 +86,7 @@ const RED: [number, number, number] = [229, 72, 77]
 const GREEN: [number, number, number] = [48, 164, 108]
 const AMBER: [number, number, number] = [199, 120, 22]
 const VIOLET: [number, number, number] = [91, 91, 214]
+const CITY_ORDER: [number, number, number] = [194, 106, 46]
 
 /**
  * 跨部门场景的车辆路线按力量类型分配：
@@ -157,16 +164,13 @@ export const SCENARIO_MAP_CONFIGS: Record<ScenarioMapVariant, ScenarioMapConfig>
     title: '120 医疗保障态势',
     area: '越秀区盘福路周边',
     summary: '急救保障、接收点与转运关系示意',
-    center: [113.2568, 23.1265],
-    zoom: 15.25,
-    areas: [
-      { position: [113.2568, 23.1265], radius: 500, color: GREEN, layer: 'base' },
-      { position: [113.2612, 23.1304], radius: 380, color: BLUE, layer: 'weather' },
-    ],
+    center: [113.2542, 23.1206],
+    zoom: 13.85,
+    areas: [],
     points: [
-      { position: [113.2568, 23.1265], label: '商圈急救保障', kind: 'event', color: RED, poi: 'event', labelOffset: [14, -18] },
-      { position: [113.2529, 23.1294], label: '演示急救点', kind: 'resource', color: GREEN, poi: 'medical', labelOffset: [-12, -12] },
-      { position: [113.2602, 23.1238], label: '演示接收点', kind: 'resource', color: BLUE, poi: 'hospital', labelOffset: [12, 14] },
+      { position: [113.2568, 23.1265], label: '盘福路急救点（模拟）', kind: 'event', color: RED, poi: 'medical', labelOffset: [14, -18] },
+      { position: [113.2511865, 23.133973], label: '广州市第一人民医院', kind: 'resource', color: RED, poi: 'hospital', labelOffset: [-12, -12] },
+      { position: [113.2571165, 23.1072521], label: '广州市红十字会医院', kind: 'resource', color: GREEN, poi: 'hospital', labelOffset: [12, 14] },
       { position: [113.2554, 23.1261], label: '工作人员输入', kind: 'source', color: AMBER, labelOffset: [-12, 14] },
       { position: [113.2578, 23.1276], label: '演示事件流', kind: 'source', color: AMBER, labelOffset: [12, -12] },
       { position: [113.2538, 23.1278], label: '北侧上游点位', kind: 'camera', color: VIOLET, labelOffset: [-12, -14] },
@@ -174,21 +178,23 @@ export const SCENARIO_MAP_CONFIGS: Record<ScenarioMapVariant, ScenarioMapConfig>
     ],
     routes: [
       {
-        fromLabel: '演示急救点',
-        toLabel: '商圈急救保障',
-        color: [48, 164, 108, 210],
+        fromLabel: '盘福路急救点（模拟）',
+        toLabel: '广州市第一人民医院',
+        displayLabel: '原接收路线 · 市一医院',
+        color: [229, 72, 77, 190],
         layer: 'routes',
         width: 4,
       },
       {
-        fromLabel: '演示接收点',
-        toLabel: '商圈急救保障',
-        color: [59, 130, 246, 200],
+        fromLabel: '盘福路急救点（模拟）',
+        toLabel: '广州市红十字会医院',
+        displayLabel: '候选转运路线 · 红十字会医院',
+        color: [14, 154, 167, 220],
         layer: 'routes',
         width: 4,
       },
       {
-        eventLabel: '商圈急救保障',
+        eventLabel: '盘福路急救点（模拟）',
         color: [199, 120, 22, 175],
         layer: 'traffic',
         state: 'attention',
@@ -198,19 +204,20 @@ export const SCENARIO_MAP_CONFIGS: Record<ScenarioMapVariant, ScenarioMapConfig>
   },
   traffic: {
     title: '交通协同态势',
-    area: '越秀区文明路沿线',
-    summary: '事故路段、保障点与响应路线示意',
-    center: [113.2684, 23.1253],
-    zoom: 14.95,
-    areas: [
-      { position: [113.2684, 23.1253], radius: 430, color: AMBER, layer: 'base' },
-      { position: [113.2732, 23.129], radius: 420, color: BLUE, layer: 'weather' },
-    ],
+    area: '越秀区中山路沿线',
+    summary: '清障车在途三路线比较 · 路网策略预设',
+    center: [113.2657, 23.1246],
+    zoom: 14.75,
+    // 调度工作台以三条路网路线为主，不叠加范围圈，避免把路线读成事件半径。
+    areas: [],
     // 响应资源为演示锚点，落在范围圈内的可达路网附近，避免单行道把响应线带出场景范围。
     points: [
-      { position: [113.2684, 23.1253], label: '事故路段 · 文明路', kind: 'event', color: RED, poi: 'crash', labelOffset: [14, -48] },
-      { position: [113.2648, 23.126], label: '交警岗', kind: 'resource', color: BLUE, poi: 'police', labelOffset: [-12, -10] },
-      { position: [113.2715, 23.1256], label: '医疗保障', kind: 'resource', color: GREEN, poi: 'medical', labelOffset: [12, 24] },
+      { position: [113.2684, 23.1253], label: '中山路清障作业点（模拟）', kind: 'event', color: RED, poi: 'crash', labelOffset: [14, -48] },
+      { position: [113.2628, 23.1215], label: '清障车 02 当前位置（模拟）', kind: 'resource', color: BLUE, poi: 'vehicle', labelOffset: [-12, -10] },
+      { position: [113.2662, 23.1248], label: '前方受阻入口（模拟）', kind: 'event', color: RED, poi: 'road_closure', labelOffset: [12, 24] },
+      { position: [113.2635, 23.129], label: '路线 A 经由点', kind: 'entry', color: BLUE, hidden: true },
+      { position: [113.2662, 23.1248], label: '路线 B 经由点', kind: 'entry', color: RED, hidden: true },
+      { position: [113.266, 23.1215], label: '南侧备用路口', kind: 'entry', color: GREEN, poi: 'entry', labelOffset: [12, 16] },
       { position: [113.2661, 23.1254], label: '道路巡查', kind: 'source', color: AMBER, labelOffset: [-12, 14] },
       { position: [113.2712, 23.1251], label: '市民上报', kind: 'source', color: AMBER, labelOffset: [12, -22] },
       { position: [113.2655, 23.1275], label: '北侧上游点位', kind: 'camera', color: VIOLET, labelOffset: [-12, -14] },
@@ -218,25 +225,84 @@ export const SCENARIO_MAP_CONFIGS: Record<ScenarioMapVariant, ScenarioMapConfig>
     ],
     routes: [
       {
-        eventLabel: '事故路段 · 文明路',
+        eventLabel: '前方受阻入口（模拟）',
         color: [229, 72, 77, 220],
         layer: 'traffic',
         state: 'blocked',
         width: 2.4,
       },
       {
-        fromLabel: '交警岗',
-        toLabel: '事故路段 · 文明路',
-        color: [59, 130, 246, 200],
+        fromLabel: '清障车 02 当前位置（模拟）',
+        toLabel: '中山路清障作业点（模拟）',
+        viaLabels: ['路线 A 经由点'],
+        displayLabel: '路线 A · 常规 12 分钟',
+        color: [59, 130, 246, 215],
         layer: 'routes',
         width: 4,
       },
       {
-        fromLabel: '医疗保障',
-        toLabel: '事故路段 · 文明路',
-        color: [14, 154, 167, 200],
+        fromLabel: '清障车 02 当前位置（模拟）',
+        toLabel: '中山路清障作业点（模拟）',
+        viaLabels: ['路线 B 经由点'],
+        displayLabel: '路线 B · 原最短 8 分钟 · 已受阻',
+        color: [229, 72, 77, 215],
         layer: 'routes',
         width: 4,
+      },
+      {
+        fromLabel: '清障车 02 当前位置（模拟）',
+        toLabel: '中山路清障作业点（模拟）',
+        viaLabels: ['南侧备用路口'],
+        displayLabel: '路线 C · 推荐改线 10 分钟',
+        color: [48, 164, 108, 225],
+        layer: 'routes',
+        width: 4,
+      },
+    ],
+  },
+  urban_order: {
+    title: '市容秩序协同态势',
+    area: '越秀区北京路商圈 · 演示场景',
+    summary: '夜市占道、消防通道核验与协同处置示意',
+    center: [113.2651543, 23.11936],
+    zoom: 16.1,
+    areas: [
+      { position: [113.2651543, 23.11936], radius: 430, color: CITY_ORDER, layer: 'base' },
+    ],
+    points: [
+      { position: [113.2651543, 23.11936], label: '北京路夜市占道点（演示）', kind: 'event', color: CITY_ORDER, poi: 'urban_order', labelOffset: [14, -36] },
+      { position: [113.2638, 23.1202], label: '市容巡查单元（模拟）', kind: 'resource', color: CITY_ORDER, poi: 'urban_order', labelOffset: [-12, -12] },
+      { position: [113.2680, 23.1176], label: '消防协同单元（模拟）', kind: 'resource', color: RED, poi: 'fire_station', labelOffset: [12, 14] },
+      { position: [113.26525, 23.11915], label: '消防通道入口（模拟待核实）', kind: 'source', color: RED, poi: 'road_closure', labelOffset: [14, 18] },
+      { position: [113.26495, 23.11965], label: '商户图片上报（模拟待核实）', kind: 'source', color: AMBER, poi: 'report', labelOffset: [-12, -16] },
+      { position: [113.26545, 23.11895], label: '巡查语音上报（模拟待核实）', kind: 'source', color: AMBER, poi: 'report', labelOffset: [12, 22] },
+      { position: [113.2647, 23.1200], label: '商圈视频点位（模拟待核实）', kind: 'camera', color: VIOLET, poi: 'camera', labelOffset: [-12, -14] },
+    ],
+    signals: {
+      anchorLabel: '北京路夜市占道点（演示）',
+      labels: ['商户图片（模拟待核实）', '巡查语音（模拟待核实）', '商圈视频（模拟待核实）'],
+    },
+    routes: [
+      {
+        fromLabel: '市容巡查单元（模拟）',
+        toLabel: '北京路夜市占道点（演示）',
+        color: [194, 106, 46, 215],
+        layer: 'routes',
+        width: 4,
+      },
+      {
+        fromLabel: '消防协同单元（模拟）',
+        toLabel: '北京路夜市占道点（演示）',
+        color: [229, 72, 77, 205],
+        layer: 'routes',
+        width: 4,
+      },
+      {
+        eventLabel: '北京路夜市占道点（演示）',
+        color: [229, 72, 77, 220],
+        layer: 'traffic',
+        state: 'blocked',
+        width: 2.6,
       },
     ],
   },

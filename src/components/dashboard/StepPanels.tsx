@@ -135,6 +135,8 @@ export function ScenarioStatePanel({ scenario, step }: { scenario: DashboardScen
   const stage = SCENARIO_STAGE_PRESENTATION[Math.min(8, Math.max(0, step === 5 ? 4 : step))]
   const mapSummary = scenario.id === 'haizhu-police'
     ? '广州站公开事件锚点 · 3 个公开资源 POI · 演示路线'
+    : scenario.id === 'yuexiu-urban-order'
+      ? '北京路夜市占道点 · 消防通道入口 · 2 个演示协同单元'
     : scenario.id === 'yuexiu-traffic'
       ? '事故路段 · 绕行关系 · 2 个保障点'
       : scenario.id === 'tianhe-major'

@@ -6,7 +6,7 @@ import type { PoiKind } from '../map/poiCatalog'
 
 export type IncidentFilter = 'all' | 'pending-decision' | 'abnormal'
 export type TodayEventStatus = 'new' | 'pending-decision' | 'executing' | 'abnormal' | 'completed'
-export type TodayEventDomain = '119' | '110' | '120' | '交通' | '重大布防'
+export type TodayEventDomain = '119' | '110' | '120' | '交通' | '市容秩序' | '重大布防'
 
 export interface TodayEvent {
   id: string
@@ -24,7 +24,7 @@ export interface TodayEvent {
   poi: PoiKind
   shortLabel: string
   nextAction: string
-  /** 只有五类经过验证的样板事件允许进入对应处置链 */
+  /** 只有六类经过验证的样板事件允许进入对应处置链 */
   workflowScenarioId?: string
 }
 
@@ -45,6 +45,7 @@ export const TODAY_EVENT_STATUS_META: Record<TodayEventStatus, { label: string; 
  * 广州站 2015 那条原来混在今日台账里标着 time: '历史'，本身就是这次要拆开的东西。
  */
 export const TODAY_EVENTS: TodayEvent[] = [
+  { id: 'ev-city-order-beijing', time: '15:06', domain: '市容秩序', domainColor: '#C26A2E', title: '北京路商圈夜市占道 + 消防通道受阻', location: '越秀区北京路商圈 · 精确点位为演示', summary: '商户图片、巡查语音与商圈视频形成占道线索；占道范围和消防通道受阻状态均待人工核实。', source: '商户图片 + 巡查语音 + 商圈视频（均为模拟待核实）', owner: '北京路市容秩序协同负责人（模拟）', status: 'pending-decision', severity: 'critical', position: [113.2651543, 23.11936], poi: 'urban_order', shortLabel: '北京路夜市占道', nextAction: '人工核实占道范围与消防通道状态后，再选择清理顺序、主责单元和协同任务。', workflowScenarioId: 'yuexiu-urban-order' },
   { id: 'ev-fire-finance', time: '15:00', domain: '119', domainColor: '#E5484D', title: '金融城高层办公楼火情联动', location: '天河区黄埔大道中 376 号', summary: '物业报告高层持续冒烟，人员数量和消防通道状态待核实。', source: '接警模板 + 物业上报', owner: '消防值守组', status: 'pending-decision', severity: 'critical', position: [113.3472, 23.1224], poi: 'fire', shortLabel: '金融城高层火情', nextAction: '核实被困人数与通道状态后，由人工选择 A/B 方案。', workflowScenarioId: 'liwan-fire' },
   { id: 'ev-medical-panfu', time: '14:48', domain: '120', domainColor: '#0E9AA7', title: '盘福路急救保障协同', location: '越秀区盘福路周边', summary: '患者分级与接收点能力尚未确认，转运方案等待人工选择。', source: '工作人员输入模板', owner: '急救联络负责人', status: 'pending-decision', severity: 'watch', position: [113.2568, 23.1265], poi: 'medical', shortLabel: '盘福路急救保障', nextAction: '确认患者等级和接收能力后批准转运方案。', workflowScenarioId: 'yuexiu-medical' },
   { id: 'ev-traffic-zhongshan', time: '14:44', domain: '交通', domainColor: '#B8860B', title: '中山路事故清障协同', location: '越秀区中山路沿线', summary: '原定开路节点反馈延迟，清障单元需要调整绕行入口。', source: '道路巡查模板', owner: '道路保障负责人', status: 'abnormal', severity: 'critical', position: [113.2684, 23.1253], poi: 'vehicle', shortLabel: '中山路清障异常', nextAction: '调整保障点并重新计算 ETA，旧批准立即失效。', workflowScenarioId: 'yuexiu-traffic' },
@@ -258,13 +259,13 @@ export interface DomainPulse {
   short: string
   label: string
   active: number
-  /** 在办口径：五个域说法不一样，「进行中」和「待处置」不能混着写 */
+  /** 在办口径：六个工作面说法不一样，「进行中」和「待处置」不能混着写 */
   activeLabel: string
   note: string
   /**
    * 该域的资源读数。原来这组数字在页面底部的六张统计卡里另摆一遍，
    * 和这里的在办起数是同一批口径（119 进行中 3 == 消防在办 3）。
-   * 8/20 评审判定「五域态势和底下一排重复」，把资源读数并进来，底部整条撤掉。
+   * 8/20 评审判定「工作面态势和底下一排重复」，把资源读数并进来，底部整条撤掉。
    */
   resources: string
   /** 侧栏一行放不下全称，缩写上屏、全称进 title，避免读者猜「车 46」是什么 */
@@ -272,12 +273,13 @@ export interface DomainPulse {
   color: string
 }
 
-/** 五个业务域同级展示；在办起数与资源读数均为演示 */
+/** 六个工作面同级展示；在办起数与资源读数均为演示 */
 export const DOMAIN_PULSES: DomainPulse[] = [
   { id: 'fire', scenarioId: 'liwan-fire', short: '119', label: '消防', active: 3, activeLabel: '进行中', note: '1 起重点处置', resources: '站点 14 · 车 46', resourcesFull: '可用站点 14 · 车辆 46', color: '#E5484D' },
   { id: 'police', scenarioId: 'haizhu-police', short: '110', label: '警情', active: 8, activeLabel: '待处置', note: '2 起现场核实', resources: '警力 186 · 铁骑 74', resourcesFull: '路面警力 186 · 铁骑 74', color: '#2F6FDA' },
   { id: 'medical', scenarioId: 'yuexiu-medical', short: '120', label: '医疗', active: 5, activeLabel: '待处置', note: '1 起分级转运', resources: '医院 148 · 车 312', resourcesFull: '医院 148 · 救护车 312', color: '#0E9AA7' },
   { id: 'traffic', scenarioId: 'yuexiu-traffic', short: '交通', label: '交通', active: 4, activeLabel: '处置中', note: '2 段缓行处置', resources: '开路 7 · 待批 3', resourcesFull: '开路执行中 7 · 待批准 3', color: '#B8860B' },
+  { id: 'urban_order', scenarioId: 'yuexiu-urban-order', short: '市容', label: '市容秩序', active: 2, activeLabel: '待核实', note: '1 起通道受阻线索', resources: '巡查 6 · 车 3', resourcesFull: '演示巡查单元 6 · 演示车辆 3', color: '#C26A2E' },
   { id: 'major', scenarioId: 'tianhe-major', short: '布防', label: '布防', active: 1, activeLabel: '保障中', note: '晚间活动保障', resources: '岗位 12 · 备勤 4', resourcesFull: '保障岗位 12 · 备勤 4', color: '#7C3AED' },
 ]
 
@@ -344,6 +346,20 @@ export const SEVERITY_META: Record<AlertSeverity, { label: string; bg: string; f
 
 /** 初始就有的告警流（城市不存在“一切正常”的空态） */
 export const INITIAL_ALERTS: CityAlert[] = [
+  {
+    id: 'al-city-order-beijing',
+    time: '15:06:12',
+    severity: 'critical',
+    domain: '市容秩序',
+    domainColor: '#C26A2E',
+    scenarioId: 'yuexiu-urban-order',
+    title: '北京路夜市占道与消防通道受阻线索待人工核实',
+    source: '多模态线索（模拟待核实）',
+    primary: true,
+    position: [113.2651543, 23.11936],
+    poi: 'urban_order',
+    shortLabel: '北京路夜市占道',
+  },
   {
     id: 'al-fire-376',
     time: '15:00:18',
@@ -468,7 +484,7 @@ export type UnitStatus = 'standby' | 'enroute' | 'onscene'
 export interface DispatchUnit {
   id: string
   name: string
-  kind: '消防' | '公安' | '医疗' | '交管'
+  kind: '消防' | '公安' | '医疗' | '交管' | '市容'
   kindColor: string
   status: UnitStatus
   location: string
@@ -499,6 +515,8 @@ export const UNIT_STATUS_META: Record<UnitStatus, { label: string; bg: string; f
 
 /** 资源调度板的单位清单（演示数据）。占用事件与主线场景对齐。 */
 export const DISPATCH_UNITS: DispatchUnit[] = [
+  { id: 'u-urban-order-beijing-01', name: '北京路市容巡查单元 01（模拟）', kind: '市容', kindColor: '#C26A2E', status: 'onscene', location: '北京路夜市占道点（模拟）', occupiedBy: '北京路商圈夜市占道 + 消防通道受阻（模拟待核实）', strength: '4 人 · 1 辆巡查车（模拟）', position: [113.2638, 23.1202] },
+  { id: 'u-urban-order-yuexiu-02', name: '越秀市容机动单元 02（模拟）', kind: '市容', kindColor: '#C26A2E', status: 'standby', location: '文明路周边（模拟）', eta: '6 分钟（模拟估算）', strength: '3 人 · 1 辆巡查车（模拟）', position: [113.2706, 23.1250] },
   { id: 'u-fire-lied', name: '多宝消防救援站 · 响应单元', kind: '消防', kindColor: '#E5484D', status: 'enroute', location: '列车广场 · 多宝街道', occupiedBy: '金融城高层火情联动', eta: '4 分钟', strength: '30 人 · 5 车', position: [113.2265785, 23.1155885], staticPoi: { name: '广州市荔湾区多宝消防救援站', type: '消防救援站', address: '列车广场 · 多宝街道 · 荔湾区', sourceLabel: '© OpenStreetMap contributors · ODbL', sourceUrl: 'https://www.openstreetmap.org/way/1079152727', capturedAt: '2026-08-20' } },
   { id: 'u-fire-yuancun', name: '水上消防中队 · 响应单元', kind: '消防', kindColor: '#E5484D', status: 'standby', location: '荔湾—海珠公开 POI', strength: '24 人 · 4 车', position: [113.2400905, 23.0969983], staticPoi: { name: '广州消防支队水上消防中队', type: '消防救援站', sourceLabel: '© OpenStreetMap contributors · ODbL', sourceUrl: 'https://www.openstreetmap.org/copyright', capturedAt: '2026-08-14' } },
   { id: 'u-fire-shipai', name: '光大消防中队 · 响应单元', kind: '消防', kindColor: '#E5484D', status: 'standby', location: '海珠区公开 POI', strength: '6 人 · 2 车', position: [113.2559561, 23.0868815], staticPoi: { name: '光大消防中队', type: '消防救援站', sourceLabel: '© OpenStreetMap contributors · ODbL', sourceUrl: 'https://www.openstreetmap.org/copyright', capturedAt: '2026-08-14' } },
@@ -565,7 +583,7 @@ export function buildOverviewKpis(events: TodayEvent[], enrouteCount = enrouteUn
     label: '在途单位',
     value: String(enrouteCount),
     unit: '组',
-    delta: '含 5 组跨域协同',
+    delta: '含 6 组跨域协同（模拟）',
     deltaTone: 'flat',
     series: [8, 10, 9, 12, 14, 13, 15, 16, 14, 15, 16, enrouteCount],
   },

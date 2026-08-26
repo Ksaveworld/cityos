@@ -21,10 +21,9 @@ import type { PoiMarkerDatum } from '@/components/dashboard/map/MapPoiMarkers'
 import { ResourceDispatchRail } from '@/components/dashboard/dispatch/ResourceDispatchRail'
 import { ResourceDispatchPanel } from '@/components/dashboard/dispatch/ResourceDispatchPanel'
 import { ResourceDispatchWorkspace } from '@/components/dashboard/dispatch/ResourceDispatchWorkspace'
-import {
-  ActiveEventDispatchContext,
-  type ActiveDispatchEvent,
-} from '@/components/dashboard/dispatch/ActiveEventDispatch'
+import { CommandWorkbench } from '@/components/dashboard/dispatch/CommandWorkbench'
+import type { CommandScenarioId } from '@/components/dashboard/dispatch/commandWorkbenchModel'
+import type { ActiveDispatchEvent } from '@/components/dashboard/dispatch/ActiveEventDispatch'
 import {
   DISPATCH_CASES,
   DISPATCH_FACILITIES,
@@ -102,6 +101,16 @@ const RIGHT_PANEL_MIN_WIDTH = 360
 const RIGHT_PANEL_MAX_RATIO = 0.46
 const RIGHT_PANEL_KEYBOARD_STEP = 16
 const BASE_ENROUTE_UNIT_COUNT = DISPATCH_UNITS.filter((unit) => unit.status === 'enroute').length
+
+function commandScenarioMapVariant(scenarioId: CommandScenarioId): ScenarioMapVariant | null {
+  if (scenarioId === 'traffic') return 'traffic'
+  if (scenarioId === 'fire') return 'routine'
+  if (scenarioId === 'police') return 'police'
+  if (scenarioId === 'medical') return 'medical'
+  if (scenarioId === 'city-order') return 'urban_order'
+  if (scenarioId === 'major') return 'major'
+  return null
+}
 
 type DispatchWorkflowEntry =
   | { kind: 'daily'; eventId: string; scenarioId: string; source: 'resources' | 'workflow'; session?: WorkflowSession }
@@ -293,7 +302,9 @@ function LegacyApp() {
 
   useEffect(() => {
     if (workspace !== 'resources' || dispatchWorkflowEntry) return
-    const defaultCase = DISPATCH_CASES[0]
+    // 本轮黄金链路优先中山路在途改线；进入资源调度即落到可操作的交通异常，
+    // 其余工作面仍保留在左侧事件流中切换。
+    const defaultCase = DISPATCH_CASES.find((item) => item.eventId === 'ev-traffic-zhongshan') ?? DISPATCH_CASES[0]
     if (!defaultCase) return
     setDispatchWorkflowEntry(createResourceDispatchEntry(defaultCase.eventId, workflowSessions))
   }, [dispatchWorkflowEntry, workflowSessions, workspace])
@@ -952,7 +963,15 @@ function LegacyApp() {
       return {
         id: `dispatch-unit-${unit.id}`,
         position: unit.position,
-        kind: unit.kind === '消防' ? 'fire_station' : unit.kind === '公安' ? 'police' : unit.kind === '医疗' ? 'medical' : 'vehicle',
+        kind: unit.kind === '消防'
+          ? 'fire_station'
+          : unit.kind === '公安'
+            ? 'police'
+            : unit.kind === '医疗'
+              ? 'medical'
+              : unit.kind === '市容'
+                ? 'urban_order'
+                : 'vehicle',
         label: unit.name,
         role: 'facility' as const,
         planningState,
@@ -1262,11 +1281,14 @@ function LegacyApp() {
       ? 'police'
       : activeScenarioId === 'yuexiu-medical'
         ? 'medical'
+      : activeScenarioId === 'yuexiu-urban-order'
+        ? 'urban_order'
       : activeScenarioId === 'yuexiu-traffic'
         ? 'traffic'
         : activeScenarioId === 'tianhe-major'
           ? 'major'
           : null
+  const commandMapLayers = { ...mapLayers, traffic: true, routes: true }
   return (
     <div
       className={`grid h-svh min-w-[1180px] gap-2.5 overflow-hidden bg-[#F4F5FA] p-2.5 text-[#1A1D26] ${
@@ -1314,7 +1336,43 @@ function LegacyApp() {
         )}
 
         {workspace === 'resources' ? (
-          <ResourceDispatchWorkspace
+          activeDispatchEvent ? (
+            <CommandWorkbench
+              event={activeDispatchEvent}
+              renderMap={(commandScenario, commandMap) => (
+                <CityMap
+                  site={scenario.site}
+                  roads={routing.roads}
+                  plans={plans}
+                  routeWayIds={routeWayIds}
+                  medicalRoute={null}
+                  activePlanId={mapActivePlanId}
+                  animate
+                  taskRoutesVisible
+                  routePulseAllowed
+                  pulseActivePlanOnly={false}
+                  executionFrame={commandMap.executionFrame}
+                  showStrategyMarkers={false}
+                  focusActiveRoute={false}
+                  scenarioFocusRevision={scenarioFocusRevision}
+                  closedWays={[]}
+                  routeStale={false}
+                  onCloseWay={() => undefined}
+                  onRemoveClosedWay={() => undefined}
+                  layers={commandMapLayers}
+                  resourceReferenceVisible={false}
+                  onResourceReferenceVisibleChange={() => undefined}
+                  showResourceReferenceControl={false}
+                  showSimulationProvenance={false}
+                  scenarioVariant={commandScenarioMapVariant(commandScenario)}
+                  routineHospitalTransfer={null}
+                  onScenarioPointSelect={(point) => commandMap.onScenarioPointSelect(point.label)}
+                  showRoadNetworkContext
+                />
+              )}
+            />
+          ) : (
+            <ResourceDispatchWorkspace
                 selectedCase={selectedDispatchCase}
                 selectedAssignment={selectedDispatchAssignment}
                 selectedOperation={selectedDispatchOperation}
@@ -1330,6 +1388,7 @@ function LegacyApp() {
                 onSelectResolution={setDispatchResolutionOptionId}
                 onApplyResolution={applyDispatchResolution}
               />
+          )
         ) : (
         <section
           key="map-workspace"
@@ -1442,16 +1501,6 @@ function LegacyApp() {
             onApprove={approveDispatchAdjustment}
             onSend={sendDispatchTasks}
             onClose={closeDispatchEvent}
-          />
-        )}
-
-        {workspace === 'resources' && activeDispatchEvent && (
-          <ActiveEventDispatchContext
-            event={activeDispatchEvent}
-            onAsk={(text) => setDispatchPromptRequest({ id: crypto.randomUUID(), text })}
-            onApplyResolution={applyDispatchResolution}
-            selectedOptionId={dispatchResolutionOptionId}
-            onSelectOption={setDispatchResolutionOptionId}
           />
         )}
 

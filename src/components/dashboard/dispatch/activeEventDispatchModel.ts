@@ -227,6 +227,24 @@ export function resolveDispatchException(event: ActiveDispatchEvent, assignments
     }
   }
 
+  if (event.fixture.id === 'urban_order') {
+    const assignment = findAssignment(assignments, ['市容', '秩序', '巡查'])
+    if (!assignment) return null
+    return {
+      department: assignment.department,
+      task: assignment.task,
+      title: '消防通道状态变化待复核',
+      detail: '模拟执行完成后收到新的待核实线索，占道边界与消防通道状态需要重新人工确认。',
+      signals: ['商户图片为模拟待核实线索', '巡查语音尚无现场负责人确认', '商圈视频不自动触发清理或调度'],
+      action: '在本页选择模拟市容巡查单元；人工确认后再生成新版本任务包。',
+      options: [
+        resolutionOption(event.session, assignment, 'urban-order-beijing-01', '北京路市容巡查单元 01（模拟）', '北京路夜市占道点（模拟）', '北京路市容秩序协同负责人（模拟）', '巡查车 1 辆（模拟）', '只生成待批准草案；回传占道边界、消防通道状态与商户疏导进度（模拟）。'),
+        resolutionOption(event.session, assignment, 'urban-order-yuexiu-02', '越秀市容机动单元 02（模拟）', '北京路商圈外围集结点（模拟）', '越秀市容机动负责人（模拟）', '巡查车 1 辆（模拟）', '只生成待批准草案；回传到场、通道复核与异常状态（模拟）。'),
+      ],
+    }
+  }
+
+  if (event.fixture.id !== 'major') return null
   const assignment = findAssignment(assignments, ['重大布防', '属地', '保障'])
   if (!assignment) return null
   return {

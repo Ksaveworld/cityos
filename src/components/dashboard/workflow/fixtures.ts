@@ -335,6 +335,82 @@ export const DOMAIN_FIXTURES: Record<DomainId, DomainFixture> = {
     },
     executionSteps: ['演示任务包生成', '演示道路保障签收', '清障状态演示回填', '受控重试或完成'],
   },
+  urban_order: {
+    id: 'urban_order', scenarioId: 'yuexiu-urban-order', label: '市容秩序', title: '北京路商圈夜市占道 + 消防通道受阻', address: '越秀区北京路商圈 · 精确点位为演示',
+    dataNote: '本页事件时序、精确点位、占道范围、消防通道状态、多模态线索、资源与 ETA 均为演示或待核实；未接真实城管、消防或商圈系统。',
+    inputTemplates: [
+      { id: 'urban-order-night-market', title: '夜市占道与消防通道核验', detail: '商户图片 + 巡查语音 + 商圈视频 · 模拟待核实' },
+      { id: 'urban-order-corridor', title: '重点通道占用核验', detail: '工作人员受限模板 · 演示事件' },
+    ],
+    inputFields: [
+      { id: 'eventType', label: '事件类型', value: '北京路商圈夜市占道 + 消防通道受阻（演示待核实）' },
+      { id: 'location', label: '发生地点', value: '越秀区北京路商圈 · 精确点位为演示' },
+      { id: 'time', label: '发现时间', value: '15:06（演示时序）' },
+      { id: 'occupation', label: '占道线索', value: '夜市摊位疑似占用通行空间，范围待人工核实', summaryRank: 1 },
+      { id: 'fireAccess', label: '消防通道', value: '疑似受阻，尚未由现场人员确认', summaryRank: 2 },
+      { id: 'multimodal', label: '多模态信号', value: '商户图片、巡查语音、商圈视频均为模拟待核实', summaryRank: 3 },
+      { id: 'description', label: '现场补充', value: '不得依据图片、语音或视频自动生成执法与调度指令。', kind: 'textarea', summaryRank: 4 },
+    ],
+    defaultOwner: '北京路市容秩序协同负责人（模拟）',
+    primaryDispatchTitle: '市容调度', countOwner: null,
+    resourceLabel: '市容巡查单元', resourceUnit: '组', metricScopeLabel: '市容主责单元', minResources: 1, maxResources: 4, defaultResources: 2, baseEtaMinutes: 7.8, baseCoverageScore: 66,
+    fireDispatch: {
+      title: '消防调度',
+      options: [
+        { id: 'urban-order-fire-verify', label: '消防协同单元现场核验 · 模拟', etaDeltaMinutes: -0.7, coverageDelta: 4 },
+        { id: 'urban-order-fire-standby', label: '消防单元就近待命 · 模拟', etaDeltaMinutes: 0, coverageDelta: 0 },
+        { id: 'urban-order-fire-none', label: '暂不请求消防协同 · 模拟', etaDeltaMinutes: 0.8, coverageDelta: -5 },
+      ],
+    },
+    medicalDispatch: {
+      title: '医疗调度',
+      options: [
+        { id: 'urban-order-med-near', label: '商圈医疗保障点待命 · 模拟', etaDeltaMinutes: -0.3, coverageDelta: 2 },
+        { id: 'urban-order-med-standby', label: '就近接收点联络 · 模拟', etaDeltaMinutes: 0, coverageDelta: 0 },
+        { id: 'urban-order-med-none', label: '不请求医疗协同 · 模拟', etaDeltaMinutes: 0.2, coverageDelta: -1 },
+      ],
+    },
+    trafficDispatch: {
+      title: '路况协同',
+      options: [
+        { id: 'urban-order-road-corridor', label: '消防通道入口优先保障 · 模拟', etaDeltaMinutes: -0.8, coverageDelta: 3 },
+        { id: 'urban-order-road-staged', label: '分区疏导、保留装卸窗口 · 模拟', etaDeltaMinutes: 0, coverageDelta: 1 },
+        { id: 'urban-order-road-none', label: '仅现场口头疏导 · 模拟', etaDeltaMinutes: 0.9, coverageDelta: -4 },
+      ],
+    },
+    plans: [
+      { id: 'A', label: 'A', title: '先恢复消防通道，再分区疏导', summary: '人工确认通道受阻后，优先形成安全通行空间，再组织摊位分区疏导。', etaMinutes: 6.8, coverageRisk: '注意', actions: ['人工核验消防通道', '市容巡查单元分区疏导', '消防协同单元复核通行条件'] },
+      { id: 'B', label: 'B', title: '分区疏导、错峰清理', summary: '先稳定商户沟通和行人通行，再按区域错峰清理占道点。', etaMinutes: 8.9, coverageRisk: '较低', actions: ['商户分区沟通', '错峰清理占道点', '消防通道持续复核'] },
+    ],
+    brief: {
+      confirmed: [
+        { label: '演示输入模板', value: '夜市占道与消防通道核验', source: '工作人员受限模板', status: '演示参数已录入', dataLabel: simulated },
+        { label: '场景范围', value: '北京路商圈；精确点位为演示', source: '用户指定场景 + 公开底图参考', status: '现场范围待复核', dataLabel: simulated },
+        { label: '当前处置状态', value: '尚未批准任何清理或调度动作', source: '前端演示会话', status: '等待人工决策', dataLabel: simulated },
+      ],
+      unknown: [
+        { label: '夜市占道范围', value: '图片只提供线索，摊位数量和占用边界尚未确认', source: '商户图片（模拟待核实）', status: '未确认', dataLabel: pending },
+        { label: '消防通道状态', value: '疑似受阻，必须由现场人员复核', source: '巡查语音（模拟待核实）', status: '未确认', dataLabel: pending },
+        { label: '现场人车流', value: '商圈视频仅作待核实证据，不做自动客流判断', source: '商圈视频（模拟待核实）', status: '未确认', dataLabel: pending },
+      ],
+      context: [
+        { label: '道路与商圈范围', value: '仅使用公开底图提供地理参考', source: 'OSM 本地快照', status: '非实时', dataLabel: estimated },
+        { label: '市容与消防资源', value: '单元、人员、车辆、位置与占用状态均为模拟', source: '前端演示资源台账', status: '模拟', dataLabel: simulated },
+        { label: 'ETA', value: '按演示点位与本地路网进行条件估算', source: '前端演示模型', status: '模拟估算', dataLabel: estimated },
+      ],
+      gaps: [
+        { label: '现场核验人', value: '尚未登记可确认占道边界与通道状态的现场负责人', source: '待人工指定', status: '阻断方案批准', dataLabel: pending },
+        { label: '消防通道几何', value: '公开道路不能替代真实消防通道边界', source: '待现场核实', status: '不得据此自动下令', dataLabel: pending },
+        { label: '商户沟通结果', value: '默认尚未形成统一清理窗口', source: '待属地协同回传', status: '影响方案顺序', dataLabel: pending },
+      ],
+    },
+    executionSteps: ['模拟任务包生成', '市容、消防与属地模拟签收', '通道核验与疏导状态模拟回填', '受控重试或完成'],
+    taskAssignments: [
+      { department: '市容秩序（模拟）', owner: '北京路市容秩序协同负责人（模拟）', task: '核验占道边界、组织商户分区疏导', location: '北京路夜市占道点（模拟）', window: '人工批准后启动 · 7 分钟内到场（模拟估算）', personnel: '市容巡查单元 2 组（模拟）', vehicles: '巡查车 2 辆（模拟）', feedback: '回传到场、占道边界、疏导进度与异常（模拟）', contact: '前端模拟任务包', eta: '约 6.8 分钟（模拟估算）', etaSource: '演示点位 + 本地路网条件估算' },
+      { department: '消防协同（模拟）', owner: '消防通道核验负责人（模拟）', task: '复核消防通道入口与可通行条件', location: '消防通道入口（模拟待核实）', window: '人工批准后启动 · 8 分钟内复核（模拟估算）', personnel: '消防协同单元 1 组（模拟）', vehicles: '消防车辆 1 辆（模拟）', feedback: '回传入口位置、受阻状态与通行条件（模拟）', contact: '前端模拟任务包', eta: '约 7.5 分钟（模拟估算）', etaSource: '演示点位 + 本地路网条件估算' },
+      { department: '属地协同（模拟）', owner: '商圈联络负责人（模拟）', task: '联系商户并确认分区清理窗口', location: '北京路商圈（模拟范围）', window: '人工批准后启动 · 10 分钟内首轮反馈（模拟）', personnel: '属地联络单元 1 组（模拟）', vehicles: '步巡（模拟）', feedback: '回传商户确认、争议项与清理窗口（模拟）', contact: '前端模拟任务包', eta: '约 9.0 分钟（模拟估算）', etaSource: '演示流程时限' },
+    ],
+  },
   major: {
     id: 'major', scenarioId: 'tianhe-major', label: '重大布防', title: '体育中心活动保障布防', address: '天河体育中心周边 · 演示事件',
     dataNote: '本页为演示活动保障与演示计算，未接真实客流、安保资源或活动审批系统。',
@@ -427,5 +503,7 @@ export const WORKFLOW_FIXTURES: DomainFixture[] = [
 ]
 
 export function findFixtureByScenarioId(scenarioId: string) {
-  return WORKFLOW_FIXTURES.find((fixture) => fixture.scenarioId === scenarioId) ?? DOMAIN_FIXTURES.fire
+  const fixture = WORKFLOW_FIXTURES.find((item) => item.scenarioId === scenarioId)
+  if (!fixture) throw new Error(`未知工作流场景：${scenarioId}`)
+  return fixture
 }

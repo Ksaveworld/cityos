@@ -41,6 +41,7 @@ const DEPARTMENT_COLORS: Record<string, string> = {
   医疗: '#0E9AA7',
   交管: '#B8860B',
   交通: '#B8860B',
+  市容: '#C26A2E',
   属地: '#7C3AED',
   现场组: '#7C3AED',
 }

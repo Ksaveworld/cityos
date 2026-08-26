@@ -2,7 +2,7 @@
 // 口径（D-07 / 11.7）：每次推演沉淀的数据在知识库保留，用于模型参数校准。
 // 未接后端，所有条目必须标「演示草稿 / 未写入知识库」，不得显示"已入库"。
 
-export type KnowledgeDomain = '119 消防' | '110 警情' | '120 医疗' | '交通协同' | '重大布防'
+export type KnowledgeDomain = '119 消防' | '110 警情' | '120 医疗' | '交通协同' | '市容秩序' | '重大布防'
 
 export interface KnowledgeEntry {
   id: string
@@ -89,6 +89,20 @@ export const KNOWLEDGE_ENTRIES: KnowledgeEntry[] = [
     unknowns: '实时路况、信号配时、清障资源到位时间。',
     planSummary: 'CityOS 生成并比较「先防护再清障」与「先绕行再清障」两套候选，并把绕行、医疗待命写入任务草案。',
     sources: ['上报模板', '事故路段与路口参考'],
+    origin: '场景推演',
+  },
+  {
+    id: 'kb-urban-order',
+    scenarioId: 'yuexiu-urban-order',
+    domain: '市容秩序',
+    domainColor: '#C26A2E',
+    title: '北京路商圈夜市占道 + 消防通道受阻 · 协同推演',
+    generatedAt: '2026-08-26 22:52（演示）',
+    usage: 'demo-active',
+    facts: '演示参数：北京路商圈出现夜市占道与消防通道受阻线索；商户图片、巡查语音和商圈视频均只作为模拟待核实证据。',
+    unknowns: '占道边界、摊位数量、消防通道入口与受阻状态、现场人车流、商户沟通结果和真实资源状态均未确认。',
+    planSummary: 'CityOS 比较“先恢复消防通道再分区疏导”和“分区疏导、错峰清理”两套演示候选；资源与 ETA 均为模拟，人工批准前不生成可下发任务。',
+    sources: ['商户图片（模拟待核实）', '巡查语音（模拟待核实）', '商圈视频（模拟待核实）', 'OSM 本地地理快照'],
     origin: '场景推演',
   },
   {

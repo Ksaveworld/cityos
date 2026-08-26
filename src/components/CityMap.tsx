@@ -455,6 +455,10 @@ interface TrafficSegmentDatum {
   state: ScenarioRoadState
 }
 
+interface RoadContextDatum {
+  path: [number, number][]
+}
+
 interface MapPointDatum {
   position: [number, number]
 }
@@ -549,6 +553,10 @@ interface Props {
   scenarioVariant: ScenarioMapVariant | null
   /** 已人工确认的接收医院与固定策略路径；点位立即更新，路线仍受任务下发门控。 */
   routineHospitalTransfer?: RoutineHospitalTransfer | null
+  /** 场景 POI 只有显式传入回调时才可点，避免地图浏览态误吃点击。 */
+  onScenarioPointSelect?: (point: ScenarioMapPoint) => void
+  /** 在线瓦片不可用时也保留本地路网底纹，便于核对方案路线确实沿道路生成。 */
+  showRoadNetworkContext?: boolean
 }
 
 export const CityMap = memo(function CityMap({
@@ -585,6 +593,8 @@ export const CityMap = memo(function CityMap({
   onStaticResourceSelect,
   scenarioVariant,
   routineHospitalTransfer = null,
+  onScenarioPointSelect,
+  showRoadNetworkContext = false,
 }: Props) {
   const container = useRef<HTMLDivElement>(null)
   const legend = useRef<HTMLDivElement>(null)
@@ -1466,6 +1476,18 @@ export const CityMap = memo(function CityMap({
     // 同上：weather 分层的圆圈一并去掉，气象表达统一交给全幅动效。
     return scenarioConfig.areas.filter((area) => area.layer === 'base')
   }, [scenarioConfig])
+  const roadNetworkContext = useMemo<RoadContextDatum[]>(() => {
+    if (!showRoadNetworkContext) return []
+    return roads.features.flatMap((feature) => {
+      if (feature.geometry.type === 'LineString') {
+        return [{ path: feature.geometry.coordinates as [number, number][] }]
+      }
+      if (feature.geometry.type === 'MultiLineString') {
+        return feature.geometry.coordinates.map((path) => ({ path: path as [number, number][] }))
+      }
+      return []
+    })
+  }, [roads, showRoadNetworkContext])
   const scenarioRouting = useMemo<ScenarioRoutingState>(() => {
     if (!scenarioConfig) {
       return { paths: [], pending: false, errors: [], roadNames: [], endpointPoints: [] }
@@ -1499,23 +1521,37 @@ export const CityMap = memo(function CityMap({
       ) continue
 
       if (request.layer === 'routes') {
-        const from = resolveScenarioPoint(scenarioConfig.points, request.fromLabel)
-        const to = resolveScenarioPoint(scenarioConfig.points, request.toLabel)
-        if (!from.ok) {
-          errors.push(from.message)
-          continue
+        const routeLabels = [request.fromLabel, ...(request.viaLabels ?? []), request.toLabel]
+        const routePoints: ScenarioMapPoint[] = []
+        let invalidRoute = false
+        for (const label of routeLabels) {
+          const resolved = resolveScenarioPoint(scenarioConfig.points, label)
+          if (!resolved.ok) {
+            errors.push(resolved.message)
+            invalidRoute = true
+            break
+          }
+          routePoints.push(resolved.point)
         }
-        if (!to.ok) {
-          errors.push(to.message)
-          continue
-        }
+        if (invalidRoute) continue
 
-        const result = solveScenarioPointRoute(graph, request, from.point, to.point)
-        if (!result) {
-          errors.push(`${request.fromLabel} → ${request.toLabel} 无可行路网路线`)
-          continue
+        const segmentPaths: ScenarioPathDatum[] = []
+        for (let index = 0; index < routePoints.length - 1; index += 1) {
+          const segment = solveScenarioPointRoute(graph, request, routePoints[index], routePoints[index + 1])
+          if (!segment) {
+            errors.push(`${routeLabels[index]} → ${routeLabels[index + 1]} 无可行路网路线`)
+            invalidRoute = true
+            break
+          }
+          segmentPaths.push(segment)
         }
-        paths.push(result)
+        if (invalidRoute || segmentPaths.length === 0) continue
+        paths.push({
+          ...segmentPaths[0],
+          path: segmentPaths.flatMap((segment, index) => index === 0 ? segment.path : segment.path.slice(1)),
+          endpointLabels: [request.fromLabel, request.toLabel],
+          displayLabel: request.displayLabel,
+        })
         continue
       }
 
@@ -1805,7 +1841,7 @@ export const CityMap = memo(function CityMap({
         }]
       : []
     return [...scenarioConfig.points, ...scenarioRouting.endpointPoints, ...receivingHospitalPoint]
-      .filter((point) => point.kind !== 'camera' || layers.cameras)
+      .filter((point) => !point.hidden && (point.kind !== 'camera' || layers.cameras))
   }, [scenarioConfig, scenarioRouting.endpointPoints, layers.cameras, routineHospitalTransfer, scenarioVariant])
   // 场景点位 → POI 徽标。resource 必须在场景配置里显式标了 poi 才画得出来；
   // 没标的宁可不画，也不要退回成一个看不出是什么的通用圆点。
@@ -1820,9 +1856,10 @@ export const CityMap = memo(function CityMap({
         label: point.label,
         confidence: POI_CONFIDENCE_BY_SCENARIO_KIND[point.kind] ?? 'confirmed',
         alarm: point.kind === 'event',
+        onSelect: onScenarioPointSelect ? () => onScenarioPointSelect(point) : undefined,
       }]
     }),
-    [scenarioPoints],
+    [onScenarioPointSelect, scenarioPoints],
   )
 
   // 荔湾主链路（非场景态）的 POI。这里的消防站与医院来自公开 OSM POI，标为已确认；
@@ -2039,6 +2076,18 @@ export const CityMap = memo(function CityMap({
 
     current.setProps({
       layers: [
+        roadNetworkContext.length > 0 &&
+          new PathLayer<RoadContextDatum>({
+            id: 'local-road-network-context',
+            data: roadNetworkContext,
+            getPath: (road) => road.path,
+            getColor: [184, 191, 202, 125],
+            getWidth: 1.25,
+            widthUnits: 'pixels',
+            jointRounded: true,
+            capRounded: true,
+            pickable: false,
+          }),
         scenarioAreas.length > 0 &&
           new ScatterplotLayer<ScenarioMapArea>({
             id: 'scenario-areas-simulated',
@@ -2379,7 +2428,7 @@ export const CityMap = memo(function CityMap({
             id: 'execution-unit-labels-simulated',
             data: executionUnits,
             getPosition: (unit) => unit.position,
-            getText: (unit) => unit.kind === 'fire' ? '消' : unit.kind === 'police' ? '警' : '医',
+            getText: (unit) => unit.kind === 'fire' ? '消' : unit.kind === 'police' ? '警' : unit.kind === 'traffic' ? '障' : '医',
             getColor: [255, 255, 255, 255],
             getSize: 11,
             sizeUnits: 'pixels',
@@ -2434,7 +2483,7 @@ export const CityMap = memo(function CityMap({
         }),
       ].filter(Boolean),
     })
-  }, [activePlan, activePlanSegments, routeStale, exclusiveSegments, sharedSegments, closedRoads, blockedRoadMarkers, trafficSegments, historyTrack, layers.routes, layers.traffic, medicalOrigins, scenarioConfig, scenarioAreas, scenarioPaths, staticScenarioPaths, pulseRoutes, pulseEnabled, pulseActivePlanOnly, reducedMotion, cityOverviewMode, executionFrame, executionIntersections, executionOnsiteNodes, executionRoadCues, executionTrafficTrips, executionUnits, routePulseAllowed, taskRoutesVisible])
+  }, [activePlan, activePlanSegments, routeStale, exclusiveSegments, sharedSegments, closedRoads, blockedRoadMarkers, trafficSegments, historyTrack, layers.routes, layers.traffic, medicalOrigins, roadNetworkContext, scenarioConfig, scenarioAreas, scenarioPaths, staticScenarioPaths, pulseRoutes, pulseEnabled, pulseActivePlanOnly, reducedMotion, cityOverviewMode, executionFrame, executionIntersections, executionOnsiteNodes, executionRoadCues, executionTrafficTrips, executionUnits, routePulseAllowed, taskRoutesVisible])
 
   useEffect(() => {
     drawRef.current = draw
@@ -2831,6 +2880,7 @@ export const CityMap = memo(function CityMap({
             {executionUnits.some((unit) => unit.kind === 'fire') && <LegendPoi kind="fire_station" label="演示消防车辆" />}
             {executionUnits.some((unit) => unit.kind === 'police') && <LegendPoi kind="police" label="演示警务车辆" />}
             {executionUnits.some((unit) => unit.kind === 'medical') && <LegendPoi kind="medical" label="演示医疗车辆" />}
+            {executionUnits.some((unit) => unit.kind === 'traffic') && <LegendPoi kind="vehicle" label="模拟清障车辆" />}
             <LegendPoi kind="traffic_signal" label="演示路口状态" />
             {layers.traffic && executionRoadCues.some((cue) => cue.state === 'slow') && <LegendLine color="#D99724" label="演示缓行路况" thin />}
             {layers.traffic && executionRoadCues.some((cue) => cue.state === 'detour') && <LegendLine color="#5B5BD6" label="演示绕行路况" thin />}
@@ -2846,6 +2896,7 @@ export const CityMap = memo(function CityMap({
             <LegendPoi kind="vehicle" label="交通事件" />
             <LegendPoi kind="police" label="110 警情" />
             <LegendPoi kind="hospital" label="120 医疗" />
+            <LegendPoi kind="urban_order" label="市容秩序" />
             <LegendPoi kind="assembly" label="重大布防" />
           </>
         ) : scenarioConfig ? (
@@ -2882,7 +2933,9 @@ export const CityMap = memo(function CityMap({
               <div key={error} className="py-0.5 text-[#E5484D]">{error}</div>
             ))}
             <LegendPoi kind="event" label="场景事件锚点" />
-            <LegendPoi kind="medical" label="协同资源 · 按类别取图标" />
+            {scenarioVariant === 'urban_order'
+              ? <LegendPoi kind="urban_order" label="市容巡查资源 · 模拟" />
+              : <LegendPoi kind="medical" label="协同资源 · 按类别取图标" />}
             <LegendPoi kind="report" label="Signal 来源 · 待核实" unverified />
             {layers.cameras && <LegendPoi kind="camera" label="上游点位 · 待核实" unverified />}
           </>
@@ -3330,6 +3383,7 @@ function executionUnitColor(
   const alpha = status === 'waiting' ? 175 : 245
   if (kind === 'fire') return [229, 72, 77, alpha]
   if (kind === 'police') return [59, 130, 246, alpha]
+  if (kind === 'traffic') return [91, 91, 214, alpha]
   return [14, 154, 167, alpha]
 }
 

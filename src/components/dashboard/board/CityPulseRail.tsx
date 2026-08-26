@@ -35,7 +35,7 @@ export const CityPulseRail = memo(function CityPulseRail({
 
   return (
     <aside className="flex min-h-0 flex-col gap-2 overflow-hidden">
-      {/* 总览只保留五域与保障资源读数；趋势和告警迁往底部摘要。
+      {/* 总览只保留六工作面与保障资源读数；趋势和告警迁往底部摘要。
           资源调度页继续使用完整侧栏，避免改变其他工作区布局。 */}
       <section
         className={`${overview ? 'flex min-h-[208px] flex-1 flex-col' : 'shrink-0'} rounded-xl border border-line bg-surface-card p-2.5 shadow-panel`}
@@ -43,11 +43,11 @@ export const CityPulseRail = memo(function CityPulseRail({
         <div className={`flex shrink-0 items-center justify-between ${overview ? 'pb-2' : 'pb-1.5'}`}>
           {overview ? (
             <div className="flex items-baseline gap-2">
-              <h2 className="text-label font-semibold text-ink-1">五域态势</h2>
+              <h2 className="text-label font-semibold text-ink-1">六工作面态势</h2>
               <span className="text-[9px] text-ink-3">同级读数</span>
             </div>
           ) : (
-            <h2 className="text-label font-semibold text-ink-1">五域态势 · 同级</h2>
+            <h2 className="text-label font-semibold text-ink-1">六工作面态势 · 同级</h2>
           )}
           <OriginMark origin="simulated" note="在办起数与资源读数均为演示快照，不接实时调度系统" showLabel={false} />
         </div>
@@ -108,7 +108,7 @@ export const CityPulseRail = memo(function CityPulseRail({
 
 function OverviewDomainLedger() {
   return (
-    <div className="grid min-h-0 flex-1 grid-rows-5 border-y border-hairline">
+    <div className="grid min-h-0 flex-1 grid-rows-6 border-y border-hairline">
       {DOMAIN_PULSES.map((domain) => (
         <div
           key={domain.id}
@@ -179,7 +179,7 @@ function FullDomainRows() {
           >
             {domain.short}
           </span>
-          <span className="w-7 shrink-0 truncate text-label text-ink-1">{domain.label}</span>
+          <span className="w-12 shrink-0 truncate text-label text-ink-1" title={domain.label}>{domain.label}</span>
           <span className="flex w-[46px] shrink-0 items-baseline justify-end gap-0.5">
             <span className="font-mono text-[15px] font-semibold leading-none tabular-nums text-ink-1">{domain.active}</span>
             <span className="text-[9px] text-ink-3">{domain.activeLabel}</span>

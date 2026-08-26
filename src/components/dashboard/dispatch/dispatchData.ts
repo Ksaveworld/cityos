@@ -221,6 +221,39 @@ export const DISPATCH_CASES: DispatchCase[] = [
     ownerOptions: ['道路保障负责人', '越秀现场协调'],
   },
   {
+    eventId: 'ev-city-order-beijing',
+    scenarioId: 'yuexiu-urban-order',
+    taskLabel: '夜市占道清理与消防通道恢复任务（模拟）',
+    triggerSource: '商户图片 / 巡查语音 / 商圈视频（模拟待核实）',
+    reason: '三路多模态线索均待人工核实；如确认消防通道受阻，需要市容、消防与属地协同。',
+    currentSummary: '1 个市容主责单元（模拟） · 消防通道状态待核实',
+    historyReference: '市容秩序假设集 urban-order-beijing-v1 · 知识库演示草稿',
+    recommendedAction: '先由人工确认占道边界与消防通道状态，再比较市容巡查单元；任何资源选择都只生成待批准草案。',
+    difficulties: [
+      {
+        id: 'urban-order-fire-access-unverified',
+        priority: 'P0',
+        title: '消防通道受阻状态未确认',
+        observed: '商户图片、巡查语音与商圈视频均为模拟线索，尚无现场负责人确认通道是否受阻。',
+        constraint: '不得把多模态线索自动升级为现场事实，也不得据此直接生成执法或调度指令。',
+        suggestedAction: '先指派现场核验人确认入口位置、受阻范围与可通行条件，再提交处置方案。',
+        expectedImpact: '核验会增加等待时间，但可避免错误清理或错误下发。',
+      },
+      {
+        id: 'urban-order-merchant-coordination',
+        priority: 'P1',
+        title: '占道清理与商户疏导需要同步',
+        observed: '摊位清理顺序、行人通行与商户沟通窗口均为模拟待确认状态。',
+        constraint: '主责单元变化必须同步更新商户联络人与消防通道复核任务。',
+        suggestedAction: '比较当前与备用市容单元，并将疏导、复核和反馈要求写入同一版本任务包。',
+        expectedImpact: '减少任务责任串线，但方案需要重新人工批准。',
+      },
+    ],
+    primaryLabel: '市容巡查单元（模拟）',
+    candidateUnitIds: ['u-urban-order-beijing-01', 'u-urban-order-yuexiu-02'],
+    ownerOptions: ['北京路市容秩序协同负责人（模拟）', '越秀市容机动负责人（模拟）'],
+  },
+  {
     eventId: 'ev-major-tianhe',
     scenarioId: 'tianhe-major',
     taskLabel: '重点分区岗位补位任务',
@@ -259,11 +292,6 @@ const CASE_BY_EVENT = new Map(DISPATCH_CASES.map((item) => [item.eventId, item])
 
 export function dispatchDisplayText(value: string) {
   return value
-    .replaceAll('（演示）', '')
-    .replaceAll('（演示）', '')
-    .replaceAll('演示', '')
-    .replaceAll('演示', '')
-    .replace(/\s*·\s*$/, '')
     .replace(/\s{2,}/g, ' ')
     .trim()
 }
@@ -309,6 +337,7 @@ export function createInitialDispatchAssignments(): Record<string, DispatchAssig
     { eventId: 'ev-police-station-delay', scenarioId: 'yuexiu-police-current', primaryUnitId: 'u-police-yuexiu-01', assignedUnitIds: ['u-police-yuexiu-01', 'u-traffic-yuexiu-02'], facilityId: null, owner: '站区协同负责人' },
     { eventId: 'ev-medical-panfu', scenarioId: 'yuexiu-medical', primaryUnitId: 'u-medical-shiyi', assignedUnitIds: ['u-medical-shiyi'], facilityId: 'facility-shiyi', owner: '急救联络负责人' },
     { eventId: 'ev-traffic-zhongshan', scenarioId: 'yuexiu-traffic', primaryUnitId: 'u-traffic-zhongshan', assignedUnitIds: ['u-traffic-zhongshan', 'u-medical-yuexiu-02'], facilityId: null, owner: '道路保障负责人' },
+    { eventId: 'ev-city-order-beijing', scenarioId: 'yuexiu-urban-order', primaryUnitId: 'u-urban-order-beijing-01', assignedUnitIds: ['u-urban-order-beijing-01'], facilityId: null, owner: '北京路市容秩序协同负责人（模拟）' },
     { eventId: 'ev-major-tianhe', scenarioId: 'tianhe-major', primaryUnitId: 'u-traffic-tianhe-04', assignedUnitIds: ['u-traffic-tianhe-04', 'u-fire-shipai', 'u-medical-haizhu-03'], facilityId: null, owner: '现场总协调' },
   ]
   return Object.fromEntries(assignments.map((item) => [item.eventId, item]))
