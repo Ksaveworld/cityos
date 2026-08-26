@@ -9,10 +9,20 @@ import type {
   CityChatResponse,
   CityChatUnknown,
 } from '../src/components/dashboard/chat/chatContract.js'
+import {
+  CITYOS_READ_TOOL_DEFINITIONS,
+  createConfiguredCityosReadToolRuntime,
+  type CityosReadToolName,
+  type CityosReadToolResult,
+  type CityosReadToolRuntime,
+} from './cityos/agent-tools.ts'
 
 const MAX_BODY_BYTES = 48 * 1024
 const MAX_REQUESTS_PER_MINUTE = 20
 const MODEL_TIMEOUT_MS = 27_000
+const MAX_MODEL_ROUNDS = 4
+const MAX_TOOL_CALLS_PER_ROUND = 3
+const MAX_TOOL_CONTENT_CHARS = 24_000
 const TOOL_NAME = 'submit_city_chat_answer'
 
 interface DispatchSkillDefinition {
@@ -143,6 +153,7 @@ interface RuntimeDependencies {
   fetch?: typeof fetch
   now?: () => Date
   randomId?: () => string
+  agentTools?: CityosReadToolRuntime
 }
 
 interface MiniMaxResponse {
@@ -151,6 +162,8 @@ interface MiniMaxResponse {
     message?: {
       content?: string | null
       tool_calls?: Array<{
+        id?: string
+        type?: string
         function?: {
           name?: string
           arguments?: string
@@ -324,9 +337,11 @@ function parseRequest(value: unknown): CityChatRequest {
 
 function buildSystemPrompt(assistant: CityChatRequest['assistant'], dispatchSkill?: DispatchSkillDefinition) {
   const modePrompt = assistant === 'dispatch'
-    ? [
+      ? [
         '你是“CityOS 城安助手”的资源调度副驾。只围绕当前页面解释触发依据、任务困难、资源选项和双向影响。',
         '你不能直接调派、批准、发送任务或声称真实资源状态；涉及写操作时只给建议，并标明需要人工批准。',
+        '需要核对后端状态时，只能调用 get_incident_context、get_dispatch_board、get_decision_lineage 三个只读工具；绝不能请求或虚构其他工具。',
+        '只读工具返回的 facts 和 sources 是服务器验证过的补充上下文；引用时必须原样使用其中的 fact id。',
         '历史参考只说明可迁移的约束和差异，不能覆盖今天的模拟资源池。',
         ...(dispatchSkill ? [`当前意图场景：${dispatchSkill.label}（${dispatchSkill.id}）。`, ...dispatchSkill.prompt] : []),
       ]
@@ -347,7 +362,7 @@ function buildSystemPrompt(assistant: CityChatRequest['assistant'], dispatchSkil
     'recommendation.visible 为 true 时，actionId 必须取自上下文 availableActions；动作名称和是否需要审批都由服务端按该动作定义决定。',
     'options 中的 optionId 必须取自上下文 options；不要创造上下文之外的候选资源或处理路径。',
     '最终结果保持紧凑：evidence 最多 3 条、unknowns 最多 3 条、options 最多 2 条、followUps 最多 2 条；优先覆盖最影响结论的内容，不要在工具参数中重复分析过程。',
-    `必须调用 ${TOOL_NAME} 返回最终结果，不要在普通文本中输出答案。`,
+    `完成必要的只读查询后，必须单独调用 ${TOOL_NAME} 返回最终结果，不要在普通文本中输出答案。`,
     '回答使用简洁、自然、面向终端用户的简体中文，不写空泛口号，不重复同一句边界说明。',
   ].join('\n')
 }
@@ -441,13 +456,40 @@ function modelMessages(request: CityChatRequest, dispatchSkill?: DispatchSkillDe
       role: 'user',
       content: [
         `用户问题：${request.message.text}`,
-        '以下 JSON 是当前页面允许使用的全部业务上下文：',
+        '以下 JSON 是当前页面的初始业务上下文；只有已注册只读工具可以补充后端事实：',
         '<cityos_context>',
         JSON.stringify(context),
         '</cityos_context>',
       ].join('\n'),
     },
   ]
+}
+
+function mergeToolEvidence(context: CityChatContext, result: CityosReadToolResult): CityChatContext {
+  const sources = new Map(context.sources.map((item) => [item.id, item]))
+  const facts = new Map(context.facts.map((item) => [item.id, item]))
+  result.sources.forEach((item) => sources.set(item.id, item))
+  result.facts.forEach((item) => facts.set(item.id, item))
+  return {
+    ...context,
+    sources: [...sources.values()],
+    facts: [...facts.values()],
+  }
+}
+
+function toolResultContent(result: CityosReadToolResult) {
+  const full = JSON.stringify(result)
+  if (full.length <= MAX_TOOL_CONTENT_CHARS) return full
+  return JSON.stringify({
+    ...result,
+    data: { truncated: true, reason: 'TOOL_RESULT_TOO_LARGE' },
+  })
+}
+
+function readToolName(name: string): CityosReadToolName | null {
+  return CITYOS_READ_TOOL_DEFINITIONS.some((tool) => tool.function.name === name)
+    ? name as CityosReadToolName
+    : null
 }
 
 function extractJson(content: string) {
@@ -640,7 +682,14 @@ function miniMaxBusinessError(statusCode: number) {
   }
 }
 
-async function callMiniMax(request: CityChatRequest, env: Environment, dependencies: RuntimeDependencies, dispatchSkill?: DispatchSkillDefinition, clientSignal?: AbortSignal) {
+async function callMiniMax(
+  request: CityChatRequest,
+  env: Environment,
+  dependencies: RuntimeDependencies,
+  requestId: string,
+  dispatchSkill?: DispatchSkillDefinition,
+  clientSignal?: AbortSignal,
+) {
   const config = getConfig(env)
   if (!config.apiKey) {
     throw new ChatHttpError(503, 'CHAT_NOT_CONFIGURED', '智能服务尚未配置；问题已保留，配置后可直接重试。', true)
@@ -661,48 +710,109 @@ async function callMiniMax(request: CityChatRequest, env: Environment, dependenc
   else clientSignal?.addEventListener('abort', abortFromClient, { once: true })
   const timer = setTimeout(() => controller.abort(), MODEL_TIMEOUT_MS)
   try {
-    const response = await (dependencies.fetch ?? fetch)(endpoint, {
-      method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        Authorization: `Bearer ${config.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: config.model,
-        messages: modelMessages(request, dispatchSkill),
-        tools: [answerTool],
-        tool_choice: 'auto',
-        stream: false,
-        max_completion_tokens: 2_200,
-        temperature: 0.3,
-        top_p: 0.9,
-        reasoning_split: true,
-      }),
-      signal: controller.signal,
-    })
-    const payload = await response.json().catch(() => null) as MiniMaxResponse | null
-    if (!response.ok) {
-      if (response.status === 401 || response.status === 403) {
-        throw new ChatHttpError(503, 'CHAT_UPSTREAM_AUTH_FAILED', '智能服务凭据无效或无权使用当前模型，请检查服务端配置。')
-      }
-      if (response.status === 429) {
-        throw new ChatHttpError(429, 'CHAT_UPSTREAM_RATE_LIMITED', '智能服务当前请求较多，请稍后重试。', true)
-      }
-      throw new ChatHttpError(502, 'CHAT_UPSTREAM_ERROR', '智能服务暂时没有返回可用结果，请稍后重试。', true)
-    }
-    if (payload?.base_resp?.status_code && payload.base_resp.status_code !== 0) {
-      throw miniMaxBusinessError(payload.base_resp.status_code)
-    }
-    const validationContext = dispatchSkill
+    const messages: Array<Record<string, unknown>> = modelMessages(request, dispatchSkill)
+    let validationContext = dispatchSkill
       ? scopeContextForDispatchSkill(request.context, dispatchSkill)
       : request.context
-    const answer = validateAnswer(extractToolAnswer(payload ?? {}), validationContext, request.assistant)
-      ?? (request.assistant === 'knowledge' ? plainKnowledgeAnswer(payload ?? {}) : null)
-    if (!answer) {
-      throw new ChatHttpError(502, 'MODEL_RESPONSE_INVALID', '模型回复未通过结构校验，本次没有生成业务回答。', true)
+    let runtime = dependencies.agentTools
+    const tools = request.assistant === 'dispatch'
+      ? [...CITYOS_READ_TOOL_DEFINITIONS, answerTool]
+      : [answerTool]
+
+    for (let round = 0; round < MAX_MODEL_ROUNDS; round += 1) {
+      const response = await (dependencies.fetch ?? fetch)(endpoint, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          Authorization: `Bearer ${config.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: config.model,
+          messages,
+          tools,
+          tool_choice: 'auto',
+          stream: false,
+          max_completion_tokens: 2_200,
+          temperature: 0.3,
+          top_p: 0.9,
+          reasoning_split: true,
+        }),
+        signal: controller.signal,
+      })
+      const payload = await response.json().catch(() => null) as MiniMaxResponse | null
+      if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+          throw new ChatHttpError(503, 'CHAT_UPSTREAM_AUTH_FAILED', '智能服务凭据无效或无权使用当前模型，请检查服务端配置。')
+        }
+        if (response.status === 429) {
+          throw new ChatHttpError(429, 'CHAT_UPSTREAM_RATE_LIMITED', '智能服务当前请求较多，请稍后重试。', true)
+        }
+        throw new ChatHttpError(502, 'CHAT_UPSTREAM_ERROR', '智能服务暂时没有返回可用结果，请稍后重试。', true)
+      }
+      if (payload?.base_resp?.status_code && payload.base_resp.status_code !== 0) {
+        throw miniMaxBusinessError(payload.base_resp.status_code)
+      }
+
+      const message = payload?.choices?.[0]?.message
+      const readCalls = (message?.tool_calls ?? [])
+        .filter((call) => call.function?.name !== TOOL_NAME)
+        .slice(0, MAX_TOOL_CALLS_PER_ROUND)
+        .map((call, index) => ({
+          ...call,
+          id: call.id?.trim() || `cityos-tool-${round + 1}-${index + 1}`,
+          type: 'function',
+        }))
+
+      if (readCalls.length > 0) {
+        messages.push({
+          role: 'assistant',
+          content: message?.content ?? null,
+          tool_calls: readCalls,
+        })
+        for (const call of readCalls) {
+          const requestedName = call.function?.name?.trim() || ''
+          let content: string
+          try {
+            const toolName = readToolName(requestedName)
+            if (!toolName) {
+              content = JSON.stringify({
+                ok: false,
+                error: { code: 'TOOL_NOT_ALLOWED', message: '该工具未在 CityOS 只读白名单中。' },
+              })
+            } else {
+              runtime ??= createConfiguredCityosReadToolRuntime(env)
+              const result = await runtime.invoke(toolName, {
+                requestId,
+                conversationId: request.conversationId,
+                messageId: request.message.id,
+              })
+              validationContext = mergeToolEvidence(validationContext, result)
+              content = toolResultContent(result)
+            }
+          } catch {
+            content = JSON.stringify({
+              ok: false,
+              error: { code: 'TOOL_UNAVAILABLE', message: '只读业务数据暂时不可用。' },
+            })
+          }
+          messages.push({
+            role: 'tool',
+            tool_call_id: call.id,
+            content,
+          })
+        }
+        continue
+      }
+
+      const answer = validateAnswer(extractToolAnswer(payload ?? {}), validationContext, request.assistant)
+        ?? (request.assistant === 'knowledge' ? plainKnowledgeAnswer(payload ?? {}) : null)
+      if (!answer) {
+        throw new ChatHttpError(502, 'MODEL_RESPONSE_INVALID', '模型回复未通过结构校验，本次没有生成业务回答。', true)
+      }
+      return answer
     }
-    return answer
+    throw new ChatHttpError(502, 'MODEL_TOOL_ROUNDS_EXCEEDED', '智能服务连续查询后仍未生成可验证回答。', true)
   } catch (error) {
     if (error instanceof ChatHttpError) throw error
     if (error instanceof DOMException && error.name === 'AbortError') {
@@ -749,7 +859,7 @@ export async function handleCityChatRequest(request: Request, env: Environment, 
       ? resolveDispatchSkill(chatRequest.message.text, chatRequest.intentTag)
       : undefined
     const answer = boundaryAnswer
-      ?? await callMiniMax(chatRequest, env, dependencies, dispatchSkill, request.signal)
+      ?? await callMiniMax(chatRequest, env, dependencies, requestId, dispatchSkill, request.signal)
     const response: CityChatResponse = {
       requestId,
       conversationId: chatRequest.conversationId,

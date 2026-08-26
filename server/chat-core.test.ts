@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { handleCityChatRequest } from './chat-core.ts'
+import { CITYOS_READ_TOOL_DEFINITIONS, type CityosReadToolRuntime } from './cityos/agent-tools.ts'
 
 const context = {
   contextVersion: 'test-v1',
@@ -55,6 +56,151 @@ const validToolArguments = {
   options: [],
   followUps: ['还要看什么？'],
 }
+
+test('dispatch Agent executes a read tool, feeds its result back, and validates the final tool fact', async () => {
+  const requestBodies: Array<{
+    tools: Array<{ function: { name: string } }>
+    messages: Array<{ role: string; tool_call_id?: string; content?: string }>
+  }> = []
+  const invoked: string[] = []
+  const runtime: CityosReadToolRuntime = {
+    definitions: CITYOS_READ_TOOL_DEFINITIONS,
+    async invoke(toolName) {
+      invoked.push(toolName)
+      return {
+        ok: true,
+        toolName,
+        incidentId: 'incident-1',
+        data: { planVersion: 2, status: 'draft' },
+        facts: [{
+          id: 'tool:board:incident-1:plan',
+          label: '当前方案',
+          value: '版本 2，状态 draft',
+          kind: 'simulated',
+          sourceIds: ['cityos-tool:get_dispatch_board:incident-1'],
+        }],
+        sources: [{
+          id: 'cityos-tool:get_dispatch_board:incident-1',
+          label: 'CityOS 调度台只读模型（模拟）',
+          type: 'simulated',
+        }],
+      }
+    },
+  }
+  let round = 0
+
+  const response = await handleCityChatRequest(
+    chatRequest('dispatch'),
+    { MINIMAX_API_KEY: 'server-only-test-key' },
+    {
+      randomId: () => 'request-agent-tools',
+      agentTools: runtime,
+      fetch: async (_input, init) => {
+        const body = JSON.parse(String(init?.body)) as typeof requestBodies[number]
+        requestBodies.push(body)
+        round += 1
+        if (round === 1) {
+          return Response.json({
+            choices: [{ message: { tool_calls: [{
+              id: 'call-board',
+              type: 'function',
+              function: { name: 'get_dispatch_board', arguments: '{}' },
+            }] } }],
+            base_resp: { status_code: 0 },
+          })
+        }
+        return Response.json({
+          choices: [{ message: { tool_calls: [{
+            id: 'call-answer',
+            type: 'function',
+            function: {
+              name: 'submit_city_chat_answer',
+              arguments: JSON.stringify({
+                ...validToolArguments,
+                directAnswer: '当前后端方案是版本 2，仍处于草案状态。',
+                evidence: [{
+                  evidenceType: 'context_fact',
+                  factId: 'tool:board:incident-1:plan',
+                  label: '模型伪造标签',
+                  value: '模型伪造内容',
+                  sourceIds: [],
+                }],
+              }),
+            },
+          }] } }],
+          base_resp: { status_code: 0 },
+        })
+      },
+    },
+  )
+
+  const payload = await response.json() as { answer: { evidence: Array<{ label: string; value: string }> } }
+  assert.equal(response.status, 200)
+  assert.deepEqual(invoked, ['get_dispatch_board'])
+  assert.equal(requestBodies.length, 2)
+  assert.deepEqual(
+    requestBodies[0].tools.map((tool) => tool.function.name),
+    ['get_incident_context', 'get_dispatch_board', 'get_decision_lineage', 'submit_city_chat_answer'],
+  )
+  const toolMessage = requestBodies[1].messages.find((message) => message.role === 'tool')
+  assert.equal(toolMessage?.tool_call_id, 'call-board')
+  assert.match(toolMessage?.content ?? '', /tool:board:incident-1:plan/)
+  assert.deepEqual(payload.answer.evidence, [{
+    label: '当前方案',
+    value: '版本 2，状态 draft',
+    kind: 'simulated',
+    sourceIds: ['cityos-tool:get_dispatch_board:incident-1'],
+  }])
+})
+
+test('dispatch Agent rejects a hallucinated write tool without invoking the runtime', async () => {
+  let round = 0
+  let invoked = false
+  let writeToolResult = ''
+  const runtime: CityosReadToolRuntime = {
+    definitions: CITYOS_READ_TOOL_DEFINITIONS,
+    async invoke() {
+      invoked = true
+      throw new Error('write tool must not reach runtime')
+    },
+  }
+  const response = await handleCityChatRequest(
+    chatRequest('dispatch'),
+    { MINIMAX_API_KEY: 'server-only-test-key' },
+    {
+      agentTools: runtime,
+      fetch: async (_input, init) => {
+        round += 1
+        if (round === 1) {
+          return Response.json({
+            choices: [{ message: { tool_calls: [{
+              id: 'call-write',
+              type: 'function',
+              function: { name: 'execute_action', arguments: '{}' },
+            }] } }],
+            base_resp: { status_code: 0 },
+          })
+        }
+        const body = JSON.parse(String(init?.body)) as {
+          messages: Array<{ role: string; content?: string }>
+        }
+        writeToolResult = body.messages.find((message) => message.role === 'tool')?.content ?? ''
+        return Response.json({
+          choices: [{ message: { tool_calls: [{
+            id: 'call-answer',
+            type: 'function',
+            function: { name: 'submit_city_chat_answer', arguments: JSON.stringify(validToolArguments) },
+          }] } }],
+          base_resp: { status_code: 0 },
+        })
+      },
+    },
+  )
+
+  assert.equal(response.status, 200)
+  assert.equal(invoked, false)
+  assert.match(writeToolResult, /TOOL_NOT_ALLOWED/)
+})
 
 test('GET only reports whether the intelligent service is configured', async () => {
   const response = await handleCityChatRequest(
