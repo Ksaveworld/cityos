@@ -3,6 +3,8 @@ import type { IncomingMessage } from 'node:http'
 import type { Plugin } from 'vite'
 
 import { handleCityChatRequest } from './chat-core.ts'
+import { getCityosDatabase } from './cityos/db.ts'
+import { createPostgresLlmAuditSink } from './cityos/llm-audit.ts'
 
 type Environment = Record<string, string | undefined>
 
@@ -28,6 +30,9 @@ function webHeaders(request: IncomingMessage) {
 }
 
 export function cityChatDevPlugin(env: Environment): Plugin {
+  const audit = env.CITYOS_DATABASE_URL
+    ? createPostgresLlmAuditSink(getCityosDatabase(env))
+    : undefined
   return {
     name: 'cityos-chat-api',
     apply: 'serve',
@@ -50,7 +55,7 @@ export function cityChatDevPlugin(env: Environment): Plugin {
             body,
             signal: clientAbort.signal,
           })
-          const webResponse = await handleCityChatRequest(webRequest, env)
+          const webResponse = await handleCityChatRequest(webRequest, env, { audit })
           response.statusCode = webResponse.status
           webResponse.headers.forEach((value, name) => response.setHeader(name, value))
           response.end(Buffer.from(await webResponse.arrayBuffer()))

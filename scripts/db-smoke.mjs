@@ -23,6 +23,7 @@ if (!/localhost|127\.0\.0\.1/.test(DATABASE_URL)) {
 
 const { handleCityosRequest } = await import('../server/cityos/http.ts')
 const { createSimulatedMedicalAdapter, drainMedicalOutbox } = await import('../server/cityos/worker.ts')
+const { createPostgresLlmAuditReader, createPostgresLlmAuditSink } = await import('../server/cityos/llm-audit.ts')
 
 const env = { CITYOS_DATABASE_URL: DATABASE_URL }
 const INCIDENT = 'ev-medical-panfu'
@@ -380,6 +381,38 @@ try {
     FROM cityos.outbox WHERE event_type = 'action.deliver'
   `
   check('40 投递流没有堆积', Number(delivery.pending) === 0, `pending=${delivery.pending} done=${delivery.done}`)
+
+  // ---- Agent/LLM 脱敏审计 ----
+  const writeLlmAudit = createPostgresLlmAuditSink(sql)
+  await writeLlmAudit({
+    requestId: 'request-smoke-audit',
+    conversationId: 'conversation-smoke-audit',
+    assistant: 'dispatch',
+    intentTag: 'impact_analysis',
+    roundNo: 1,
+    model: 'configured-model',
+    status: 'tool_calls',
+    httpStatus: 200,
+    latencyMs: 120,
+    promptSha256: 'a'.repeat(64),
+    messageCount: 3,
+    toolsOffered: ['get_dispatch_board', 'submit_city_chat_answer'],
+    toolCalls: ['get_dispatch_board'],
+    promptTokens: 120,
+    completionTokens: 20,
+    totalTokens: 140,
+  })
+  const llmAudit = await createPostgresLlmAuditReader(sql)(5)
+  const auditItem = llmAudit.items.find((item) => item.requestId === 'request-smoke-audit')
+  check('41 LLM 审计元数据可写可读',
+    auditItem?.status === 'tool_calls'
+      && auditItem?.totalTokens === 140
+      && auditItem?.toolCalls?.[0] === 'get_dispatch_board',
+    `status=${auditItem?.status} tokens=${auditItem?.totalTokens}`)
+  check('42 LLM 审计不含消息正文或模型原文',
+    !JSON.stringify(auditItem).includes('messages')
+      && !JSON.stringify(auditItem).includes('response'),
+    Object.keys(auditItem ?? {}).join(','))
 
   // incident.plan.recalculated 目前没有消费者，会无限堆积。等前端实时推送落地后
   // 由推送 worker 消费；在那之前这里只把积压量报出来，不假装它已经被处理。

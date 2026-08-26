@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import { handleCityChatRequest } from './chat-core.ts'
 import { CITYOS_READ_TOOL_DEFINITIONS, type CityosReadToolRuntime } from './cityos/agent-tools.ts'
+import type { LlmAuditRecord } from './cityos/llm-audit.ts'
 
 const context = {
   contextVersion: 'test-v1',
@@ -625,4 +626,64 @@ test('dispatch assistant rejects an unstructured model response instead of rende
   const payload = await response.json() as { error: { code: string } }
   assert.equal(response.status, 502)
   assert.equal(payload.error.code, 'MODEL_RESPONSE_INVALID')
+})
+
+test('LLM audit stores only metadata, hashes, tool names and token usage', async () => {
+  const records: LlmAuditRecord[] = []
+  const response = await handleCityChatRequest(
+    chatRequest('knowledge'),
+    { MINIMAX_API_KEY: 'server-only-test-key' },
+    {
+      randomId: () => 'request-audit-success',
+      audit: async (record) => { records.push(record) },
+      fetch: async () => Response.json({
+        model: 'MiniMax-M2.7-highspeed',
+        choices: [{ message: { tool_calls: [{
+          function: { name: 'submit_city_chat_answer', arguments: JSON.stringify(validToolArguments) },
+        }] } }],
+        usage: { prompt_tokens: 120, completion_tokens: 35, total_tokens: 155 },
+        base_resp: { status_code: 0 },
+      }),
+    },
+  )
+
+  assert.equal(response.status, 200)
+  assert.equal(records.length, 1)
+  assert.deepEqual(records[0], {
+    requestId: 'request-audit-success',
+    conversationId: 'conversation-1',
+    assistant: 'knowledge',
+    roundNo: 1,
+    model: 'MiniMax-M2.7-highspeed',
+    status: 'succeeded',
+    httpStatus: 200,
+    latencyMs: records[0].latencyMs,
+    promptSha256: records[0].promptSha256,
+    messageCount: 2,
+    toolsOffered: ['submit_city_chat_answer'],
+    toolCalls: ['submit_city_chat_answer'],
+    promptTokens: 120,
+    completionTokens: 35,
+    totalTokens: 155,
+  })
+  assert.match(records[0].promptSha256, /^[0-9a-f]{64}$/)
+  assert.equal(records[0].latencyMs >= 0, true)
+  assert.doesNotMatch(JSON.stringify(records[0]), /测试问题是什么|server-only-test-key|当前页面事实可以支持/)
+})
+
+test('audit storage failure never replaces a valid business answer', async () => {
+  const response = await handleCityChatRequest(
+    chatRequest('knowledge'),
+    { MINIMAX_API_KEY: 'server-only-test-key' },
+    {
+      audit: async () => { throw new Error('audit database unavailable') },
+      fetch: async () => Response.json({
+        choices: [{ message: { tool_calls: [{
+          function: { name: 'submit_city_chat_answer', arguments: JSON.stringify(validToolArguments) },
+        }] } }],
+        base_resp: { status_code: 0 },
+      }),
+    },
+  )
+  assert.equal(response.status, 200)
 })

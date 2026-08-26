@@ -21,6 +21,10 @@ import {
 import { getCityosDatabase } from './db.ts'
 import { CityosApiError } from './errors.ts'
 import { createMedicalService } from './medical-service.ts'
+import {
+  createPostgresLlmAuditReader,
+  type LlmAuditReader,
+} from './llm-audit.ts'
 import type { MedicalService, WriteContext } from './types.ts'
 
 type Environment = Record<string, string | undefined>
@@ -30,6 +34,7 @@ const MAX_BODY_BYTES = 128 * 1024
 interface RuntimeDependencies {
   service?: MedicalService
   authService?: AuthService
+  llmAuditReader?: LlmAuditReader
   randomId?: () => string
 }
 
@@ -139,6 +144,18 @@ async function routeRequest(request: Request, env: Environment, dependencies: Ru
     const rawCredential = extractCredential(request)
     if (rawCredential) await authFor(env, dependencies).revoke(rawCredential)
     return jsonResponse({ status: 'ok' }, 200, { 'X-Trace-Id': traceId })
+  }
+
+  if (request.method === 'GET' && path === '/v1/ops/llm-calls') {
+    const principal = await authorize(request, env, dependencies, CAPABILITIES.opsAuditRead)
+    if (!principal) throw new CityosApiError(401, 'AUTH_REQUIRED', '审计记录需要登录后访问。')
+    const requestedLimit = Number(new URL(request.url).searchParams.get('limit') ?? 50)
+    if (!Number.isInteger(requestedLimit) || requestedLimit < 1 || requestedLimit > 100) {
+      throw new CityosApiError(400, 'INVALID_LIMIT', 'limit 必须是 1 到 100 的整数。')
+    }
+    const reader = dependencies.llmAuditReader
+      ?? createPostgresLlmAuditReader(getCityosDatabase(env))
+    return jsonResponse(await reader(requestedLimit), 200, { 'X-Trace-Id': traceId })
   }
 
   const incidentMatch = /^\/v1\/incidents\/([^/]+)(?:\/(context|plans|task-packages|decision-lineage|board))?$/.exec(path)

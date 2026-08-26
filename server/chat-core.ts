@@ -16,6 +16,13 @@ import {
   type CityosReadToolResult,
   type CityosReadToolRuntime,
 } from './cityos/agent-tools.ts'
+import {
+  fingerprintLlmPrompt,
+  normalizeTokenUsage,
+  type LlmAuditRecord,
+  type LlmAuditSink,
+  type LlmAuditStatus,
+} from './cityos/llm-audit.ts'
 
 const MAX_BODY_BYTES = 48 * 1024
 const MAX_REQUESTS_PER_MINUTE = 20
@@ -154,6 +161,7 @@ interface RuntimeDependencies {
   now?: () => Date
   randomId?: () => string
   agentTools?: CityosReadToolRuntime
+  audit?: LlmAuditSink
 }
 
 interface MiniMaxResponse {
@@ -174,6 +182,11 @@ interface MiniMaxResponse {
   base_resp?: {
     status_code?: number
     status_msg?: string
+  }
+  usage?: {
+    prompt_tokens?: number
+    completion_tokens?: number
+    total_tokens?: number
   }
 }
 
@@ -682,6 +695,19 @@ function miniMaxBusinessError(statusCode: number) {
   }
 }
 
+async function recordLlmAudit(dependencies: RuntimeDependencies, record: LlmAuditRecord) {
+  try {
+    await dependencies.audit?.(record)
+  } catch {
+    // 审计是旁路能力，数据库或平台调度失败不能覆盖业务回答。
+  }
+}
+
+function auditStatusForTransport(error: unknown, signal: AbortSignal): LlmAuditStatus {
+  if (signal.aborted || (error instanceof DOMException && error.name === 'AbortError')) return 'timeout'
+  return 'network_error'
+}
+
 async function callMiniMax(
   request: CityChatRequest,
   env: Environment,
@@ -720,41 +746,94 @@ async function callMiniMax(
       : [answerTool]
 
     for (let round = 0; round < MAX_MODEL_ROUNDS; round += 1) {
-      const response = await (dependencies.fetch ?? fetch)(endpoint, {
-        method: 'POST',
-        headers: {
-          Accept: 'application/json',
-          Authorization: `Bearer ${config.apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: config.model,
-          messages,
-          tools,
-          tool_choice: 'auto',
-          stream: false,
-          max_completion_tokens: 2_200,
-          temperature: 0.3,
-          top_p: 0.9,
-          reasoning_split: true,
-        }),
-        signal: controller.signal,
+      const startedAt = performance.now()
+      const promptSha256 = fingerprintLlmPrompt(messages, tools)
+      const toolsOffered = tools.map((tool) => tool.function.name)
+      const writeAudit = (
+        status: LlmAuditStatus,
+        {
+          httpStatus = 0,
+          payload = null,
+          toolCalls = [],
+          errorCode,
+        }: {
+          httpStatus?: number
+          payload?: MiniMaxResponse | null
+          toolCalls?: string[]
+          errorCode?: string
+        } = {},
+      ) => recordLlmAudit(dependencies, {
+        requestId,
+        conversationId: request.conversationId,
+        assistant: request.assistant,
+        ...((dispatchSkill?.id ?? request.intentTag)
+          ? { intentTag: dispatchSkill?.id ?? request.intentTag }
+          : {}),
+        roundNo: round + 1,
+        model: config.model,
+        status,
+        httpStatus,
+        latencyMs: Math.max(0, Math.round(performance.now() - startedAt)),
+        promptSha256,
+        messageCount: messages.length,
+        toolsOffered,
+        toolCalls,
+        ...normalizeTokenUsage(payload?.usage),
+        ...(errorCode ? { errorCode } : {}),
       })
+
+      let response: Response
+      try {
+        response = await (dependencies.fetch ?? fetch)(endpoint, {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json',
+            Authorization: `Bearer ${config.apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: config.model,
+            messages,
+            tools,
+            tool_choice: 'auto',
+            stream: false,
+            max_completion_tokens: 2_200,
+            temperature: 0.3,
+            top_p: 0.9,
+            reasoning_split: true,
+          }),
+          signal: controller.signal,
+        })
+      } catch (error) {
+        const status = auditStatusForTransport(error, controller.signal)
+        await writeAudit(status, {
+          errorCode: status === 'timeout' ? 'CHAT_UPSTREAM_TIMEOUT' : 'CHAT_UPSTREAM_UNREACHABLE',
+        })
+        throw error
+      }
       const payload = await response.json().catch(() => null) as MiniMaxResponse | null
       if (!response.ok) {
+        let error: ChatHttpError
         if (response.status === 401 || response.status === 403) {
-          throw new ChatHttpError(503, 'CHAT_UPSTREAM_AUTH_FAILED', '智能服务凭据无效或无权使用当前模型，请检查服务端配置。')
+          error = new ChatHttpError(503, 'CHAT_UPSTREAM_AUTH_FAILED', '智能服务凭据无效或无权使用当前模型，请检查服务端配置。')
+        } else if (response.status === 429) {
+          error = new ChatHttpError(429, 'CHAT_UPSTREAM_RATE_LIMITED', '智能服务当前请求较多，请稍后重试。', true)
+        } else {
+          error = new ChatHttpError(502, 'CHAT_UPSTREAM_ERROR', '智能服务暂时没有返回可用结果，请稍后重试。', true)
         }
-        if (response.status === 429) {
-          throw new ChatHttpError(429, 'CHAT_UPSTREAM_RATE_LIMITED', '智能服务当前请求较多，请稍后重试。', true)
-        }
-        throw new ChatHttpError(502, 'CHAT_UPSTREAM_ERROR', '智能服务暂时没有返回可用结果，请稍后重试。', true)
+        await writeAudit('http_error', { httpStatus: response.status, payload, errorCode: error.code })
+        throw error
       }
       if (payload?.base_resp?.status_code && payload.base_resp.status_code !== 0) {
-        throw miniMaxBusinessError(payload.base_resp.status_code)
+        const error = miniMaxBusinessError(payload.base_resp.status_code)
+        await writeAudit('business_error', { httpStatus: response.status, payload, errorCode: error.code })
+        throw error
       }
 
       const message = payload?.choices?.[0]?.message
+      const responseToolCalls = (message?.tool_calls ?? [])
+        .map((call) => call.function?.name?.trim() || '')
+        .filter(Boolean)
       const readCalls = (message?.tool_calls ?? [])
         .filter((call) => call.function?.name !== TOOL_NAME)
         .slice(0, MAX_TOOL_CALLS_PER_ROUND)
@@ -765,6 +844,11 @@ async function callMiniMax(
         }))
 
       if (readCalls.length > 0) {
+        await writeAudit('tool_calls', {
+          httpStatus: response.status,
+          payload,
+          toolCalls: readCalls.map((call) => call.function?.name?.trim() || 'unknown'),
+        })
         messages.push({
           role: 'assistant',
           content: message?.content ?? null,
@@ -808,8 +892,15 @@ async function callMiniMax(
       const answer = validateAnswer(extractToolAnswer(payload ?? {}), validationContext, request.assistant)
         ?? (request.assistant === 'knowledge' ? plainKnowledgeAnswer(payload ?? {}) : null)
       if (!answer) {
+        await writeAudit('invalid_response', {
+          httpStatus: response.status,
+          payload,
+          toolCalls: responseToolCalls,
+          errorCode: 'MODEL_RESPONSE_INVALID',
+        })
         throw new ChatHttpError(502, 'MODEL_RESPONSE_INVALID', '模型回复未通过结构校验，本次没有生成业务回答。', true)
       }
+      await writeAudit('succeeded', { httpStatus: response.status, payload, toolCalls: responseToolCalls })
       return answer
     }
     throw new ChatHttpError(502, 'MODEL_TOOL_ROUNDS_EXCEEDED', '智能服务连续查询后仍未生成可验证回答。', true)

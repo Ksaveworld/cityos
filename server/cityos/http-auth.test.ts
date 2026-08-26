@@ -254,3 +254,43 @@ test('login, me and logout use the auth service without exposing password data',
   assert.equal(logout.status, 200)
   assert.deepEqual(auth.revoked, ['session-token'])
 })
+
+test('only supervisor can read bounded LLM audit metadata', async () => {
+  const auth = fakeAuthService({
+    viewer: testPrincipal('viewer'),
+    supervisor: testPrincipal('supervisor'),
+  })
+  const readLimits: number[] = []
+  const dependencies = {
+    authService: auth.service,
+    service: fakeService(),
+    llmAuditReader: async (limit: number) => {
+      readLimits.push(limit)
+      return { items: [{ requestId: 'request-1', promptSha256: 'a'.repeat(64) }] as never[] }
+    },
+    randomId: () => 'trace-llm-audit',
+  }
+  const viewer = await handleCityosRequest(
+    new Request('http://localhost/v1/ops/llm-calls?limit=10', {
+      headers: { Authorization: 'Bearer viewer' },
+    }),
+    { CITYOS_AUTH_MODE: 'required' },
+    dependencies,
+  )
+  const supervisor = await handleCityosRequest(
+    new Request('http://localhost/v1/ops/llm-calls?limit=10', {
+      headers: { Authorization: 'Bearer supervisor' },
+    }),
+    { CITYOS_AUTH_MODE: 'required' },
+    dependencies,
+  )
+  const anonymous = await handleCityosRequest(
+    new Request('http://localhost/v1/ops/llm-calls'),
+    { CITYOS_AUTH_MODE: 'optional' },
+    dependencies,
+  )
+  assert.equal(viewer.status, 403)
+  assert.equal(supervisor.status, 200)
+  assert.equal(anonymous.status, 401)
+  assert.deepEqual(readLimits, [10])
+})
