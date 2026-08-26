@@ -27,6 +27,11 @@ test('traffic preview is reversible and only submit invalidates the approved v1 
 
 test('traffic replacement requires approval, send and acknowledgement before route C executes', () => {
   let state = createInitialCommandWorkbenchState()
+  state = commandWorkbenchReducer(state, { type: 'traffic/tick', delta: 1 })
+  assert.ok(
+    Math.abs(state.traffic.carProgress - 0.2377266150) < 1e-10,
+    'vehicle waits at the last shared B/C point before the blocked way',
+  )
   state = commandWorkbenchReducer(state, { type: 'traffic/preview-reroute' })
   state = commandWorkbenchReducer(state, { type: 'traffic/submit-reroute' })
 
@@ -50,6 +55,10 @@ test('traffic replacement requires approval, send and acknowledgement before rou
   assert.deepEqual(state.traffic.previousTask, { version: 1, status: 'replaced' })
   assert.ok(state.traffic.carProgress > 0)
   assert.ok(state.traffic.carProgress < progressOnRouteB, 'normalized progress is remapped to the longer route C')
+  assert.ok(
+    Math.abs(state.traffic.carProgress - 0.1904478302) < 1e-10,
+    'route C resumes from the same physical B/C divergence point',
+  )
 
   state = commandWorkbenchReducer(state, { type: 'traffic/start-execution' })
   assert.equal(state.traffic.phase, 'en-route')

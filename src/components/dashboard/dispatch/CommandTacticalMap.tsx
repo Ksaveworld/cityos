@@ -88,14 +88,14 @@ function TrafficMapControls({ traffic, onPreview }: { traffic: TrafficCommandSta
   return (
     <div className="command-route-controls" aria-label="中山路三条候选路线">
       <div className="command-route-times">
-        <RouteTime code="A" label="常规" time="12 分钟" color="#3B82F6" />
-        <RouteTime code="B" label="最短 · 受阻" time="8 分钟" color="#E5484D" blocked />
-        <RouteTime code="C" label="推荐改线" time="10 分钟" color="#30A46C" active={previewVisible} />
+        <RouteTime code="A" label="常规" time="约 1.8 km · 12 分钟" color="#3B82F6" />
+        <RouteTime code="B" label="最短 · 受阻" time="约 1.0 km · 8 分钟" color="#E5484D" blocked />
+        <RouteTime code="C" label="推荐改线" time="约 1.2 km · 10 分钟" color="#30A46C" active={previewVisible} />
       </div>
       {!previewVisible && (
         <button type="button" className="command-route-preview" onClick={onPreview}>
           <Route size={14} />
-          选择南侧备用路口，预览路线 C
+          选择阻塞前换道路口，预览路线 C
         </button>
       )}
       {previewVisible && (

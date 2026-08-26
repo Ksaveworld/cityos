@@ -219,7 +219,7 @@ export const CommandWorkbench = memo(function CommandWorkbench({ event, renderMa
         map={renderMap(scenario, {
           executionFrame: commandExecutionFrame,
           onScenarioPointSelect: (label) => {
-            if (scenario === 'traffic' && label === '南侧备用路口') {
+            if (scenario === 'traffic' && label === '阻塞前换道路口（模拟）') {
               dispatch({ type: 'traffic/preview-reroute' })
             }
             if (scenario === 'medical' && label === '广州市红十字会医院') {
@@ -403,9 +403,9 @@ function TrafficPlan({ state }: { state: ReturnType<typeof createInitialCommandW
       <section className="command-plan-section">
         <SectionHeading icon={Route} title="三路线比较" suffix="策略预设" />
         <div className="command-route-list">
-          <RouteRow code="A" color="#3B82F6" title="常规路线" time="12 分钟" note="可通行 · 总时间最长" />
-          <RouteRow code="B" color="#E5484D" title="原最短路线" time="8 分钟" note="原预计 · 前方已受阻" state="blocked" />
-          <RouteRow code="C" color="#30A46C" title="推荐改线" time="10 分钟" note="比 B 稍长，但短于 A" state={routeCPreview ? 'selected' : undefined} />
+          <RouteRow code="A" color="#3B82F6" title="常规路线" time="12 分钟" note="约 1.8 km · 可通行 · 路程最长" />
+          <RouteRow code="B" color="#E5484D" title="原最短路线" time="8 分钟" note="约 1.0 km · 前方已受阻" state="blocked" />
+          <RouteRow code="C" color="#30A46C" title="推荐改线" time="10 分钟" note="约 1.2 km · 比 B 稍长但短于 A" state={routeCPreview ? 'selected' : undefined} />
         </div>
         <div className="command-time-equation"><span>8 分钟 <small>已受阻</small></span><b>&lt;</b><span>10 分钟 <small>推荐</small></span><b>&lt;</b><span>12 分钟 <small>常规</small></span></div>
       </section>

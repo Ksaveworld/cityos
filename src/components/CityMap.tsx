@@ -1521,6 +1521,20 @@ export const CityMap = memo(function CityMap({
       ) continue
 
       if (request.layer === 'routes') {
+        let closedWayIds: ReadonlySet<string> | undefined
+        if (request.avoidRoadAtLabel) {
+          const avoidPoint = resolveScenarioPoint(scenarioConfig.points, request.avoidRoadAtLabel)
+          if (!avoidPoint.ok) {
+            errors.push(avoidPoint.message)
+            continue
+          }
+          const avoidedRoad = findScenarioRoad(graph, avoidPoint.point.position)
+          if (!avoidedRoad) {
+            errors.push(`${request.avoidRoadAtLabel} 未匹配到可避让 OSM 道路`)
+            continue
+          }
+          closedWayIds = new Set([avoidedRoad.wayId])
+        }
         const routeLabels = [request.fromLabel, ...(request.viaLabels ?? []), request.toLabel]
         const routePoints: ScenarioMapPoint[] = []
         let invalidRoute = false
@@ -1537,7 +1551,7 @@ export const CityMap = memo(function CityMap({
 
         const segmentPaths: ScenarioPathDatum[] = []
         for (let index = 0; index < routePoints.length - 1; index += 1) {
-          const segment = solveScenarioPointRoute(graph, request, routePoints[index], routePoints[index + 1])
+          const segment = solveScenarioPointRoute(graph, request, routePoints[index], routePoints[index + 1], closedWayIds)
           if (!segment) {
             errors.push(`${routeLabels[index]} → ${routeLabels[index + 1]} 无可行路网路线`)
             invalidRoute = true
@@ -2766,6 +2780,10 @@ export const CityMap = memo(function CityMap({
           id: route.id,
           label: route.label,
           color: route.color,
+          lengthMeters: Math.round(route.path.slice(1).reduce(
+            (total, point, index) => total + meters(route.path[index], point),
+            0,
+          )),
           nodes: route.nodes.length,
           points: route.path.length,
           phase: Number(route.phase.toFixed(3)),
@@ -2780,6 +2798,11 @@ export const CityMap = memo(function CityMap({
       data-execution-playhead={executionFrame?.playheadSec.toFixed(1) ?? ''}
       data-execution-stage={executionFrame?.incidentStage ?? ''}
       data-execution-unit-count={executionUnits.length}
+      data-execution-unit-positions={JSON.stringify(executionUnits.map((unit) => ({
+        id: unit.id,
+        position: unit.position,
+        status: unit.status,
+      })))}
       data-execution-arrived-count={executionUnits.filter((unit) => unit.status === 'arrived').length}
       data-execution-open-intersections={executionIntersections.filter((point) => point.status === 'open').length}
       data-execution-road-states={layers.traffic ? executionRoadCues.map((cue) => cue.state).join('|') : ''}
@@ -3052,12 +3075,13 @@ function solveScenarioPointRoute(
   request: ScenarioPointRouteRequest,
   fromPoint: ScenarioMapPoint,
   toPoint: ScenarioMapPoint,
+  closedWayIds?: ReadonlySet<string>,
 ): ScenarioPathDatum | null {
   const from = nearestNode(graph, fromPoint.position)
   const to = nearestNode(graph, toPoint.position)
   if (!from.ok || !to.ok) return null
 
-  const route = solve(graph, from.node, to.node)
+  const route = solve(graph, from.node, to.node, { closedWayIds })
   if (!route.ok) return null
 
   const path = route.path.slice()

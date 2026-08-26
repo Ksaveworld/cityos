@@ -35,6 +35,8 @@ export interface ScenarioPointRouteRequest {
   toLabel: string
   /** 可选经由点，按顺序沿 OSM 路网分段求路后合并。 */
   viaLabels?: string[]
+  /** 引用一个道路异常点；求路时排除该点匹配到的 OSM way，用于生成真实分叉绕行。 */
+  avoidRoadAtLabel?: string
   /** 路线图例与诊断使用的人类可读名称。 */
   displayLabel?: string
   color: [number, number, number, number]
@@ -214,18 +216,18 @@ export const SCENARIO_MAP_CONFIGS: Record<ScenarioMapVariant, ScenarioMapConfig>
     points: [
       { position: [113.2684, 23.1253], label: '中山路清障作业点（模拟）', kind: 'event', color: RED, poi: 'crash', labelOffset: [14, -48] },
       { position: [113.2628, 23.1215], label: '清障车 02 当前位置（模拟）', kind: 'resource', color: BLUE, poi: 'vehicle', labelOffset: [-12, -10] },
-      { position: [113.2662, 23.1248], label: '前方受阻入口（模拟）', kind: 'event', color: RED, poi: 'road_closure', labelOffset: [12, 24] },
-      { position: [113.2635, 23.129], label: '路线 A 经由点', kind: 'entry', color: BLUE, hidden: true },
-      { position: [113.2662, 23.1248], label: '路线 B 经由点', kind: 'entry', color: RED, hidden: true },
-      { position: [113.266, 23.1215], label: '南侧备用路口', kind: 'entry', color: GREEN, poi: 'entry', labelOffset: [12, 16] },
-      { position: [113.2661, 23.1254], label: '道路巡查', kind: 'source', color: AMBER, labelOffset: [-12, 14] },
-      { position: [113.2712, 23.1251], label: '市民上报', kind: 'source', color: AMBER, labelOffset: [12, -22] },
-      { position: [113.2655, 23.1275], label: '北侧上游点位', kind: 'camera', color: VIOLET, labelOffset: [-12, -14] },
-      { position: [113.2708, 23.127], label: '东侧上游点位', kind: 'camera', color: VIOLET, labelOffset: [12, -14] },
+      { position: [113.2654242, 23.1217937], label: '万福路受阻点（模拟）', kind: 'event', color: RED, poi: 'road_closure', labelOffset: [12, 24] },
+      { position: [113.2669931, 23.124355], label: '路线 A 常规规则点（模拟）', kind: 'entry', color: BLUE, hidden: true },
+      { position: [113.2644943, 23.121224], label: '阻塞前换道路口（模拟）', kind: 'entry', color: GREEN, poi: 'entry', labelOffset: [-12, 18] },
+      { position: [113.2669903, 23.1224768], label: '绕行汇回点（模拟）', kind: 'entry', color: GREEN, poi: 'entry', labelOffset: [12, 18] },
+      { position: [113.2661, 23.1254], label: '道路巡查', kind: 'source', color: AMBER, labelOffset: [-12, 14], hidden: true },
+      { position: [113.2712, 23.1251], label: '市民上报', kind: 'source', color: AMBER, labelOffset: [12, -22], hidden: true },
+      { position: [113.2655, 23.1275], label: '北侧上游点位', kind: 'camera', color: VIOLET, labelOffset: [-12, -14], hidden: true },
+      { position: [113.2708, 23.127], label: '东侧上游点位', kind: 'camera', color: VIOLET, labelOffset: [12, -14], hidden: true },
     ],
     routes: [
       {
-        eventLabel: '前方受阻入口（模拟）',
+        eventLabel: '万福路受阻点（模拟）',
         color: [229, 72, 77, 220],
         layer: 'traffic',
         state: 'blocked',
@@ -234,8 +236,8 @@ export const SCENARIO_MAP_CONFIGS: Record<ScenarioMapVariant, ScenarioMapConfig>
       {
         fromLabel: '清障车 02 当前位置（模拟）',
         toLabel: '中山路清障作业点（模拟）',
-        viaLabels: ['路线 A 经由点'],
-        displayLabel: '路线 A · 常规 12 分钟',
+        avoidRoadAtLabel: '路线 A 常规规则点（模拟）',
+        displayLabel: '路线 A · 常规规则 12 分钟',
         color: [59, 130, 246, 215],
         layer: 'routes',
         width: 4,
@@ -243,7 +245,6 @@ export const SCENARIO_MAP_CONFIGS: Record<ScenarioMapVariant, ScenarioMapConfig>
       {
         fromLabel: '清障车 02 当前位置（模拟）',
         toLabel: '中山路清障作业点（模拟）',
-        viaLabels: ['路线 B 经由点'],
         displayLabel: '路线 B · 原最短 8 分钟 · 已受阻',
         color: [229, 72, 77, 215],
         layer: 'routes',
@@ -252,7 +253,7 @@ export const SCENARIO_MAP_CONFIGS: Record<ScenarioMapVariant, ScenarioMapConfig>
       {
         fromLabel: '清障车 02 当前位置（模拟）',
         toLabel: '中山路清障作业点（模拟）',
-        viaLabels: ['南侧备用路口'],
+        avoidRoadAtLabel: '万福路受阻点（模拟）',
         displayLabel: '路线 C · 推荐改线 10 分钟',
         color: [48, 164, 108, 225],
         layer: 'routes',
