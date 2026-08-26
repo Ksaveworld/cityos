@@ -161,6 +161,24 @@ function facilityResponse(row: Row): FacilityResponse {
           confidence: row.confidence as Confidence,
         }
       : undefined,
+    publicReference: row.public_poi_id
+      ? {
+          id: String(row.public_poi_id),
+          kind: row.public_poi_kind as NonNullable<FacilityResponse['publicReference']>['kind'],
+          name: String(row.public_poi_name),
+          location: [number(row.public_poi_longitude), number(row.public_poi_latitude)],
+          sourceFeatureKey: String(row.public_poi_source_feature_key),
+          snapshot: {
+            id: String(row.dataset_snapshot_id),
+            datasetName: String(row.dataset_name),
+            sourceSystem: String(row.dataset_source_system),
+            sourceUrl: String(row.dataset_source_url),
+            license: String(row.dataset_license),
+            capturedAt: unixSeconds(row.dataset_captured_at),
+            contentSha256: String(row.dataset_content_sha256),
+          },
+        }
+      : undefined,
   }
 }
 
@@ -181,10 +199,21 @@ async function incidentFacilities(sql: CityosDatabase, incidentId: string): Prom
       SELECT facility_id FROM cityos.adapter_event WHERE incident_id = ${incidentId}
     )
     SELECT f.*, e.source_system, e.external_event_id, e.schema_version,
-           e.source_sequence, e.occurred_at, e.received_at, e.confidence
+           e.source_sequence, e.occurred_at, e.received_at, e.confidence,
+           poi.id AS public_poi_id, poi.kind AS public_poi_kind,
+           poi.name AS public_poi_name, poi.longitude AS public_poi_longitude,
+           poi.latitude AS public_poi_latitude,
+           poi.source_feature_key AS public_poi_source_feature_key,
+           snapshot.id AS dataset_snapshot_id, snapshot.dataset_name,
+           snapshot.source_system AS dataset_source_system,
+           snapshot.source_url AS dataset_source_url, snapshot.license AS dataset_license,
+           snapshot.captured_at AS dataset_captured_at,
+           snapshot.content_sha256 AS dataset_content_sha256
     FROM cityos.facility f
     JOIN involved i ON i.facility_id = f.id
     LEFT JOIN cityos.evidence_source e ON e.id = f.evidence_source_id
+    LEFT JOIN cityos.reference_poi poi ON poi.id = f.reference_poi_id
+    LEFT JOIN cityos.dataset_snapshot snapshot ON snapshot.id = poi.dataset_snapshot_id
     ORDER BY f.demo_eta_seconds ASC, f.id ASC
   `
   return rows.map((row) => facilityResponse(row as Row))

@@ -103,6 +103,24 @@ export interface FacilityResponse {
   statusVersion: number
   updatedAt: number
   source?: EvidenceSourceResponse
+  publicReference?: PublicPoiReference
+}
+
+export interface PublicPoiReference {
+  id: string
+  kind: 'hospital' | 'fire_station' | 'police'
+  name: string
+  location: [number, number]
+  sourceFeatureKey: string
+  snapshot: {
+    id: string
+    datasetName: string
+    sourceSystem: string
+    sourceUrl: string
+    license: string
+    capturedAt: number
+    contentSha256: string
+  }
 }
 
 export interface MedicalCandidate {
