@@ -313,12 +313,54 @@ try {
   const missing = required.filter((t) => !types.includes(t))
   check('33 审计链覆盖全链路', missing.length === 0, missing.length ? `缺 ${missing.join(',')}` : `${types.length} 条`)
 
+  // ---- 调度台读模型 ----
+  const board = await call('GET', `/v1/incidents/${INCIDENT}/board`)
+  check('34 board 一次读全', board.status === 200
+    && board.json.units.length === 10
+    && board.json.routes.length > 0
+    && board.json.incident.location?.length === 2,
+    `units=${board.json.units?.length} routes=${board.json.routes?.length} facilities=${board.json.facilities?.length}`)
+
+  const dutyKinds = new Set(board.json.units.map((u) => u.dutyStatus))
+  check('35 单位带位置与值班状态',
+    board.json.units.every((u) => u.location.length === 2 && u.dutyStatus && u.confidence)
+    && dutyKinds.size >= 2,
+    [...dutyKinds].join(','))
+
+  check('36 资源全部标记为模拟', board.json.units.every((u) => u.simulated === true))
+
+  check('37 路线只来自方案与已下发任务',
+    board.json.routes.every((r) => ['plan_candidate', 'issued_task'].includes(r.kind)
+      && board.json.facilities.some((f) => f.id === r.facilityId)),
+    board.json.routes.map((r) => `${r.kind}:${r.facilityId}`).join(' '))
+
+  // 插一家与本事件无关的接收点。全库都跟事件有关时，收敛与否看不出区别。
+  await sql`
+    INSERT INTO cityos.facility (
+      id, name, longitude, latitude, status, demo_eta_seconds,
+      demo_eta_low_seconds, demo_eta_high_seconds, demo_risk_score
+    ) VALUES ('facility-unrelated', '无关接收点', 113.30, 23.20, 'available', 900, 800, 1100, 0.4)
+    ON CONFLICT (id) DO NOTHING
+  `
+  const scoped = await call('GET', `/v1/incidents/${INCIDENT}/context`)
+  const [allFacilities] = await sql`SELECT count(*) AS n FROM cityos.facility`
+  check('38 context 只返回本事件涉及的接收点',
+    Number(allFacilities.n) === 4
+    && scoped.json.facilities.length === 3
+    && !scoped.json.facilities.some((f) => f.id === 'facility-unrelated'),
+    `context=${scoped.json.facilities.length} 全库=${allFacilities.n}`)
+
+  const boardScoped = await call('GET', `/v1/incidents/${INCIDENT}/board`)
+  check('39 board 同样不带无关接收点',
+    !boardScoped.json.facilities.some((f) => f.id === 'facility-unrelated'),
+    boardScoped.json.facilities.map((f) => f.id).join(','))
+
   const [delivery] = await sql`
     SELECT count(*) FILTER (WHERE status = 'pending') AS pending,
            count(*) FILTER (WHERE status = 'done') AS done
     FROM cityos.outbox WHERE event_type = 'action.deliver'
   `
-  check('34 投递流没有堆积', Number(delivery.pending) === 0, `pending=${delivery.pending} done=${delivery.done}`)
+  check('40 投递流没有堆积', Number(delivery.pending) === 0, `pending=${delivery.pending} done=${delivery.done}`)
 
   // incident.plan.recalculated 目前没有消费者，会无限堆积。等前端实时推送落地后
   // 由推送 worker 消费；在那之前这里只把积压量报出来，不假装它已经被处理。

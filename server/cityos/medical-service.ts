@@ -3,17 +3,37 @@ import { createHash, randomUUID } from 'node:crypto'
 import type { CityosDatabase } from './db.ts'
 import { CityosApiError } from './errors.ts'
 import type {
+  ActionRunResponse,
+  AdapterEventAppliedResponse,
+  Confidence,
+  ExecuteResult,
+  PlanVersionStatus,
   AdjustResourcesPreviewInput,
+  BoardResponse,
+  BoardRoute,
   ConfirmActionRunInput,
+  ContextResponse,
   ExecuteActionRunInput,
+  FacilityResponse,
   FacilityStatusChangedInput,
+  FeedbackResponse,
+  IncidentResponse,
+  JsonValue,
+  MedicalCandidate,
   MedicalService,
+  PlanResponse,
+  ResourceUnitResponse,
   TaskFeedbackInput,
+  TaskPackageResponse,
   WriteContext,
 } from './types.ts'
 
 type Row = Record<string, unknown>
-type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
+
+/** 具名接口没有索引签名，过不了驱动的 JSONValue 约束，这里只做类型侧适配。 */
+function pgJson(value: unknown) {
+  return value as Parameters<CityosDatabase['json']>[0]
+}
 
 function number(value: unknown): number {
   return typeof value === 'number' ? value : Number(value)
@@ -32,32 +52,32 @@ function sameMembers(left: string[], right: string[]) {
     && [...left].sort().every((value, index) => value === [...right].sort()[index])
 }
 
-function actionRunResponse(row: Row, duplicate = false) {
+function actionRunResponse(row: Row, duplicate = false): ActionRunResponse {
   const preview = row.preview as Row
   return {
-    actionRunId: row.id,
-    actionType: row.action_type,
-    incidentId: row.incident_id,
-    status: row.status,
+    actionRunId: String(row.id),
+    actionType: String(row.action_type),
+    incidentId: String(row.incident_id),
+    status: row.status as ActionRunResponse['status'],
     planVersion: number(row.plan_version),
     expectedIncidentVersion: number(row.expected_incident_version),
-    previewHash: row.preview_hash,
+    previewHash: String(row.preview_hash),
     expiresAt: unixSeconds(row.expires_at),
-    riskLevel: preview.riskLevel,
-    requiresHumanApproval: preview.requiresHumanApproval,
-    previousFacilityId: preview.previousFacilityId,
-    candidateFacilityIds: preview.candidateFacilityIds,
-    selectedFacilityId: preview.selectedFacilityId,
-    confirmedBy: row.confirmed_by ?? undefined,
+    riskLevel: String(preview.riskLevel),
+    requiresHumanApproval: preview.requiresHumanApproval === true,
+    previousFacilityId: String(preview.previousFacilityId),
+    candidateFacilityIds: preview.candidateFacilityIds as string[],
+    selectedFacilityId: String(preview.selectedFacilityId),
+    confirmedBy: row.confirmed_by === null ? undefined : String(row.confirmed_by),
     confirmedAt: row.confirmed_at ? unixSeconds(row.confirmed_at) : undefined,
     executedAt: row.executed_at ? unixSeconds(row.executed_at) : undefined,
-    result: row.result ?? undefined,
-    failure: row.failure ?? undefined,
+    result: (row.result ?? undefined) as JsonValue | undefined,
+    failure: (row.failure ?? undefined) as JsonValue | undefined,
     duplicate,
   }
 }
 
-function taskPackageResponse(row: Row) {
+function taskPackageResponse(row: Row): TaskPackageResponse {
   return {
     id: String(row.id),
     incidentId: String(row.incident_id),
@@ -74,12 +94,12 @@ function taskPackageResponse(row: Row) {
   }
 }
 
-function feedbackResponse(row: Row, duplicate = false) {
+function feedbackResponse(row: Row, duplicate = false): FeedbackResponse {
   return {
     id: String(row.id),
     taskPackageId: String(row.task_package_id),
     externalFeedbackId: String(row.external_feedback_id),
-    status: String(row.status),
+    status: row.status as FeedbackResponse['status'],
     occurredAt: unixSeconds(row.occurred_at),
     receivedAt: unixSeconds(row.received_at),
     detail: row.detail === null ? undefined : String(row.detail),
@@ -87,57 +107,104 @@ function feedbackResponse(row: Row, duplicate = false) {
   }
 }
 
-function incidentResponse(row: Row) {
+function incidentResponse(row: Row): IncidentResponse {
   return {
-    id: row.id,
-    mode: row.mode,
-    title: row.title,
-    status: row.status,
+    id: String(row.id),
+    mode: row.mode as IncidentResponse['mode'],
+    title: String(row.title),
+    status: String(row.status),
     currentVersion: number(row.current_version),
     currentPlanVersion: number(row.current_plan_version),
-    payload: row.payload,
+    location: row.longitude === null || row.longitude === undefined
+      ? undefined
+      : [number(row.longitude), number(row.latitude)],
+    payload: row.payload as JsonValue,
     createdAt: unixSeconds(row.created_at),
     updatedAt: unixSeconds(row.updated_at),
   }
 }
 
-function planResponse(row: Row) {
+function planResponse(row: Row): PlanResponse {
   return {
-    id: row.id,
-    incidentId: row.incident_id,
+    id: String(row.id),
+    incidentId: String(row.incident_id),
     version: number(row.version),
     inputVersion: number(row.input_version),
-    inputSnapshotHash: row.input_snapshot_hash,
-    status: row.status,
-    blockedReason: row.blocked_reason ?? undefined,
-    candidates: row.candidates,
-    approvedBy: row.approved_by ?? undefined,
+    inputSnapshotHash: String(row.input_snapshot_hash),
+    status: row.status as PlanResponse['status'],
+    blockedReason: row.blocked_reason === null ? undefined : String(row.blocked_reason),
+    candidates: row.candidates as MedicalCandidate[],
+    approvedBy: row.approved_by === null ? undefined : String(row.approved_by),
     approvedAt: row.approved_at ? unixSeconds(row.approved_at) : undefined,
     invalidatedAt: row.invalidated_at ? unixSeconds(row.invalidated_at) : undefined,
     createdAt: unixSeconds(row.created_at),
   }
 }
 
-function facilityResponse(row: Row) {
+function facilityResponse(row: Row): FacilityResponse {
   return {
-    id: row.id,
-    name: row.name,
+    id: String(row.id),
+    name: String(row.name),
     location: [number(row.longitude), number(row.latitude)],
-    status: row.status,
+    status: row.status as FacilityResponse['status'],
     statusVersion: number(row.status_version),
     updatedAt: unixSeconds(row.updated_at),
     source: row.evidence_source_id
       ? {
-          id: row.evidence_source_id,
-          sourceSystem: row.source_system,
-          externalEventId: row.external_event_id,
-          schemaVersion: row.schema_version,
+          id: String(row.evidence_source_id),
+          sourceSystem: String(row.source_system),
+          externalEventId: String(row.external_event_id),
+          schemaVersion: String(row.schema_version),
           sourceSequence: row.source_sequence === null ? undefined : number(row.source_sequence),
           occurredAt: row.occurred_at ? unixSeconds(row.occurred_at) : undefined,
           receivedAt: row.received_at ? unixSeconds(row.received_at) : undefined,
-          confidence: row.confidence,
+          confidence: row.confidence as Confidence,
         }
       : undefined,
+  }
+}
+
+/**
+ * 只返回本事件真正涉及的接收点：出现在任一方案候选里的、已下发任务指向的、
+ * 或有适配器事件报过状态的。不再返回全局设施表。
+ */
+async function incidentFacilities(sql: CityosDatabase, incidentId: string): Promise<FacilityResponse[]> {
+  const rows = await sql`
+    WITH involved AS (
+      SELECT DISTINCT candidate->>'facilityId' AS facility_id
+      FROM cityos.plan_version p,
+           LATERAL jsonb_array_elements(p.candidates) AS candidate
+      WHERE p.incident_id = ${incidentId}
+      UNION
+      SELECT facility_id FROM cityos.task_package WHERE incident_id = ${incidentId}
+      UNION
+      SELECT facility_id FROM cityos.adapter_event WHERE incident_id = ${incidentId}
+    )
+    SELECT f.*, e.source_system, e.external_event_id, e.schema_version,
+           e.source_sequence, e.occurred_at, e.received_at, e.confidence
+    FROM cityos.facility f
+    JOIN involved i ON i.facility_id = f.id
+    LEFT JOIN cityos.evidence_source e ON e.id = f.evidence_source_id
+    ORDER BY f.demo_eta_seconds ASC, f.id ASC
+  `
+  return rows.map((row) => facilityResponse(row as Row))
+}
+
+function resourceUnitResponse(row: Row): ResourceUnitResponse {
+  return {
+    id: String(row.id),
+    unitType: row.unit_type as ResourceUnitResponse['unitType'],
+    displayName: String(row.display_name),
+    callsign: row.callsign === null ? undefined : String(row.callsign),
+    location: [number(row.longitude), number(row.latitude)],
+    headingDeg: row.heading_deg === null ? undefined : number(row.heading_deg),
+    speedMps: row.speed_mps === null ? undefined : number(row.speed_mps),
+    dutyStatus: row.duty_status as ResourceUnitResponse['dutyStatus'],
+    incidentId: row.incident_id === null ? undefined : String(row.incident_id),
+    taskPackageId: row.task_package_id === null ? undefined : String(row.task_package_id),
+    confidence: row.confidence as ResourceUnitResponse['confidence'],
+    recordedAt: unixSeconds(row.recorded_at),
+    simulated: row.simulated === true,
   }
 }
 
@@ -166,7 +233,10 @@ export function createMedicalService(sql: CityosDatabase): MedicalService {
             AND external_event_id = ${input.source.externalEventId}
         `
         if (existingRows[0]?.response) {
-          return { ...(existingRows[0].response as Record<string, unknown>), duplicate: true }
+          return {
+            ...(existingRows[0].response as unknown as AdapterEventAppliedResponse),
+            duplicate: true,
+          }
         }
 
         const evidenceId = `source-${createHash('sha256')
@@ -227,7 +297,10 @@ export function createMedicalService(sql: CityosDatabase): MedicalService {
             WHERE source_system = ${input.source.sourceSystem}
               AND external_event_id = ${input.source.externalEventId}
           `
-          return { ...((conflict?.response as Record<string, unknown>) ?? {}), duplicate: true }
+          return {
+            ...((conflict?.response ?? {}) as unknown as AdapterEventAppliedResponse),
+            duplicate: true,
+          }
         }
 
         const [incident] = await transaction`
@@ -253,7 +326,7 @@ export function createMedicalService(sql: CityosDatabase): MedicalService {
             eventId: input.eventId,
             incidentId: input.incidentId,
             facilityId: input.facilityId,
-            status: 'late',
+            status: 'late' as const,
             currentFacilityVersion: number(facility.status_version),
             traceId: context.traceId,
           }
@@ -308,12 +381,12 @@ export function createMedicalService(sql: CityosDatabase): MedicalService {
           ORDER BY demo_eta_seconds ASC, demo_risk_score ASC, id ASC
           LIMIT 2
         `
-        const candidates = alternatives.map((row) => ({
-          facilityId: row.id,
+        const candidates: MedicalCandidate[] = alternatives.map((row) => ({
+          facilityId: String(row.id),
           routeId: `route-${input.incidentId}-${row.id}`,
           etaSeconds: number(row.demo_eta_seconds),
-          etaRange: [number(row.demo_eta_low_seconds), number(row.demo_eta_high_seconds)],
-          receivingStatus: row.status,
+          etaRange: [number(row.demo_eta_low_seconds), number(row.demo_eta_high_seconds)] as [number, number],
+          receivingStatus: row.status as MedicalCandidate['receivingStatus'],
           riskDelta: number(row.demo_risk_score),
           degraded: true,
           sourceIds: [evidenceId],
@@ -323,7 +396,7 @@ export function createMedicalService(sql: CityosDatabase): MedicalService {
         const blockedReason = input.status === 'temporarily_unavailable' && candidates.length < 2
           ? 'INSUFFICIENT_ALTERNATIVES'
           : null
-        const planStatus = blockedReason === null ? 'draft' : 'blocked'
+        const planStatus: PlanVersionStatus = blockedReason === null ? 'draft' : 'blocked'
 
         const nextPlanVersion = number(incident.current_plan_version) + 1
         const snapshot = {
@@ -343,7 +416,7 @@ export function createMedicalService(sql: CityosDatabase): MedicalService {
             candidates, blocked_reason
           ) VALUES (
             ${planId}, ${input.incidentId}, ${nextPlanVersion}, ${nextIncidentVersion},
-            ${snapshotHash}, ${planStatus}, ${transaction.json(candidates)}, ${blockedReason}
+            ${snapshotHash}, ${planStatus}, ${transaction.json(pgJson(candidates))}, ${blockedReason}
           )
         `
         await transaction`
@@ -381,18 +454,18 @@ export function createMedicalService(sql: CityosDatabase): MedicalService {
             (${randomUUID()}, ${input.incidentId},
              ${blockedReason === null ? 'plan.recalculated' : 'plan.blocked'}, 'deterministic-engine',
              ${transaction.json([evidenceId])}, ${nextIncidentVersion}, ${nextPlanVersion},
-             ${transaction.json({
+             ${transaction.json(pgJson({
                planId, snapshotHash, candidates, blockedReason,
                stalePlanVersions: result.stalePlanVersions,
-             })})
+             }))})
         `
         await transaction`
           INSERT INTO cityos.outbox (aggregate_type, aggregate_id, event_type, payload)
-          VALUES ('incident', ${input.incidentId}, 'incident.plan.recalculated', ${transaction.json(result)})
+          VALUES ('incident', ${input.incidentId}, 'incident.plan.recalculated', ${transaction.json(pgJson(result))})
         `
         await transaction`
           UPDATE cityos.adapter_event
-          SET processing_status = 'processed', response = ${transaction.json(result)}, processed_at = now()
+          SET processing_status = 'processed', response = ${transaction.json(pgJson(result))}, processed_at = now()
           WHERE id = ${input.eventId}
         `
         return result
@@ -632,7 +705,7 @@ export function createMedicalService(sql: CityosDatabase): MedicalService {
           if (action.execute_request_hash !== requestHash) {
             throw new CityosApiError(409, 'IDEMPOTENCY_KEY_REUSED', '该幂等键已经用于不同的执行请求。')
           }
-          return { ...(action.result as Row), duplicate: true }
+          return { ...(action.result as unknown as ExecuteResult), duplicate: true }
         }
         if (action.execute_idempotency_key) {
           throw new CityosApiError(409, 'ACTION_ALREADY_EXECUTED', '该 ActionRun 已由其他执行请求处理。')
@@ -735,14 +808,14 @@ export function createMedicalService(sql: CityosDatabase): MedicalService {
         // 任务包已生成即「待发送」；投递由 worker 完成，落终态前不算已送达。
         const result = {
           actionRunId,
-          status: 'queued',
+          status: 'queued' as const,
           taskPackage: taskPackageResponse(task as Row),
           simulated: true,
           traceId: context.traceId,
         }
         await transaction`
           UPDATE cityos.action_run
-          SET result = ${transaction.json(result)}
+          SET result = ${transaction.json(pgJson(result))}
           WHERE id = ${actionRunId}
         `
         await transaction`
@@ -863,18 +936,11 @@ export function createMedicalService(sql: CityosDatabase): MedicalService {
       return incidentResponse(await requireIncident(sql, incidentId))
     },
 
-    async getContext(incidentId: string) {
+    async getContext(incidentId: string): Promise<ContextResponse> {
       const incident = await requireIncident(sql, incidentId)
-      const facilities = await sql`
-        SELECT f.*, e.source_system, e.external_event_id, e.schema_version,
-               e.source_sequence, e.occurred_at, e.received_at, e.confidence
-        FROM cityos.facility f
-        LEFT JOIN cityos.evidence_source e ON e.id = f.evidence_source_id
-        ORDER BY f.demo_eta_seconds ASC, f.id ASC
-      `
       return {
         incident: incidentResponse(incident),
-        facilities: facilities.map((row) => facilityResponse(row as Row)),
+        facilities: await incidentFacilities(sql, incidentId),
       }
     },
 
@@ -884,6 +950,89 @@ export function createMedicalService(sql: CityosDatabase): MedicalService {
       `
       if (!row) throw new CityosApiError(404, 'ACTION_RUN_NOT_FOUND', 'ActionRun 不存在。')
       return actionRunResponse(row as Row)
+    },
+
+    /**
+     * 调度台读模型。一次返回事件、当前方案、单位、接收点、路线和执行状态，
+     * 前端轮询这一个端点即可。路线只来自当前方案候选和已下发任务，不编造点位。
+     */
+    async getBoard(incidentId: string): Promise<BoardResponse> {
+      const incident = await requireIncident(sql, incidentId)
+      const currentPlanVersion = number(incident.current_plan_version)
+
+      const [planRow] = await sql`
+        SELECT * FROM cityos.plan_version
+        WHERE incident_id = ${incidentId} AND version = ${currentPlanVersion}
+      `
+      const planVersion = planRow ? planResponse(planRow as Row) : null
+
+      const unitRows = await sql`
+        SELECT * FROM cityos.resource_live
+        ORDER BY unit_type ASC, id ASC
+      `
+      const taskRows = await sql`
+        SELECT * FROM cityos.task_package
+        WHERE incident_id = ${incidentId}
+        ORDER BY version DESC
+      `
+      const actionRows = await sql`
+        SELECT * FROM cityos.action_run
+        WHERE incident_id = ${incidentId}
+        ORDER BY created_at DESC
+      `
+
+      const taskPackages = taskRows.map((row) => taskPackageResponse(row as Row))
+      const selectedFacilityId = taskPackages[0]?.facilityId
+      const routes: BoardRoute[] = []
+
+      for (const candidate of (planVersion?.candidates ?? []) as MedicalCandidate[]) {
+        routes.push({
+          id: candidate.routeId,
+          kind: 'plan_candidate',
+          facilityId: candidate.facilityId,
+          etaSeconds: candidate.etaSeconds,
+          etaRange: candidate.etaRange,
+          planVersion: currentPlanVersion,
+          degraded: candidate.degraded,
+          selected: candidate.facilityId === selectedFacilityId,
+        })
+      }
+      for (const task of taskPackages) {
+        // 已下发任务指向的接收点，如果不在当前候选里也要画出来——
+        // 现场正在跑的路线不能因为方案换了版本就从图上消失。
+        if (routes.some((route) => route.facilityId === task.facilityId)) continue
+        routes.push({
+          id: `route-${incidentId}-${task.facilityId}`,
+          kind: 'issued_task',
+          facilityId: task.facilityId,
+          etaSeconds: 0,
+          etaRange: [0, 0],
+          planVersion: task.planVersion,
+          degraded: true,
+          selected: task.id === taskPackages[0]?.id,
+        })
+      }
+
+      return {
+        incident: incidentResponse(incident),
+        planVersion,
+        units: unitRows.map((row) => resourceUnitResponse(row as Row)),
+        facilities: await incidentFacilities(sql, incidentId),
+        routes,
+        actionRuns: actionRows.map((row) => {
+          const action = actionRunResponse(row as Row)
+          return {
+            actionRunId: action.actionRunId,
+            actionType: action.actionType,
+            status: action.status,
+            planVersion: action.planVersion,
+            selectedFacilityId: action.selectedFacilityId,
+            executedAt: action.executedAt,
+          }
+        }),
+        taskPackages,
+        generatedAt: Math.floor(Date.now() / 1000),
+      }
     },
 
     async getPlans(incidentId: string) {

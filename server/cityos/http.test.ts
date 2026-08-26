@@ -4,16 +4,25 @@ import test from 'node:test'
 import { handleCityosRequest } from './http.ts'
 import type { MedicalService } from './types.ts'
 
+/**
+ * 这些桩只回显入参，用来验路由、请求头和状态码，不构造完整响应。
+ * 真实响应形状由 db:smoke 对着真库断言。
+ */
+function stub<T>(value: unknown): T {
+  return value as T
+}
+
 function fakeService(overrides: Partial<MedicalService> = {}): MedicalService {
   return {
-    ingestAdapterEvent: async (input, context) => ({ input, context }),
-    previewAdjustResources: async (input, context) => ({ input, context }),
-    confirmActionRun: async (actionRunId, input, context) => ({ actionRunId, input, context }),
-    executeActionRun: async (actionRunId, input, context) => ({ actionRunId, input, context }),
-    recordTaskFeedback: async (taskPackageId, input, context) => ({ taskPackageId, input, context }),
-    getIncident: async (incidentId) => ({ id: incidentId }),
-    getContext: async (incidentId) => ({ incident: { id: incidentId }, facilities: [] }),
-    getActionRun: async (actionRunId) => ({ actionRunId, status: 'queued' }),
+    ingestAdapterEvent: async (input, context) => stub({ input, context }),
+    previewAdjustResources: async (input, context) => stub({ input, context }),
+    confirmActionRun: async (actionRunId, input, context) => stub({ actionRunId, input, context }),
+    executeActionRun: async (actionRunId, input, context) => stub({ actionRunId, input, context }),
+    recordTaskFeedback: async (taskPackageId, input, context) => stub({ taskPackageId, input, context }),
+    getIncident: async (incidentId) => stub({ id: incidentId }),
+    getContext: async (incidentId) => stub({ incident: { id: incidentId }, facilities: [] }),
+    getActionRun: async (actionRunId) => stub({ actionRunId, status: 'queued' }),
+    getBoard: async (incidentId) => stub({ incident: { id: incidentId }, units: [], routes: [] }),
     getPlans: async () => ({ items: [] }),
     getTaskPackages: async () => ({ items: [] }),
     getDecisionLineage: async () => ({ items: [] }),
@@ -78,7 +87,12 @@ test('POST rejects writes in degraded mode before calling the service', async ()
     }),
     {},
     {
-      service: fakeService({ ingestAdapterEvent: async () => { called = true } }),
+      service: fakeService({
+        ingestAdapterEvent: async () => {
+          called = true
+          throw new Error('降级模式不应该走到服务层')
+        },
+      }),
       randomId: () => 'trace-degraded',
     },
   )

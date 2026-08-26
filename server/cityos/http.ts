@@ -84,13 +84,14 @@ function serviceFor(env: Environment, dependencies: RuntimeDependencies) {
 
 async function routeRequest(request: Request, env: Environment, dependencies: RuntimeDependencies, traceId: string) {
   const path = apiPath(request)
-  const incidentMatch = /^\/v1\/incidents\/([^/]+)(?:\/(context|plans|task-packages|decision-lineage))?$/.exec(path)
+  const incidentMatch = /^\/v1\/incidents\/([^/]+)(?:\/(context|plans|task-packages|decision-lineage|board))?$/.exec(path)
   if (request.method === 'GET' && incidentMatch) {
     const incidentId = decodeURIComponent(incidentMatch[1])
     const resource = incidentMatch[2]
     const service = serviceFor(env, dependencies)
     if (!resource) return jsonResponse(await service.getIncident(incidentId), 200, { 'X-Trace-Id': traceId })
     if (resource === 'context') return jsonResponse(await service.getContext(incidentId), 200, { 'X-Trace-Id': traceId })
+    if (resource === 'board') return jsonResponse(await service.getBoard(incidentId), 200, { 'X-Trace-Id': traceId })
     if (resource === 'plans') return jsonResponse(await service.getPlans(incidentId), 200, { 'X-Trace-Id': traceId })
     if (resource === 'task-packages') return jsonResponse(await service.getTaskPackages(incidentId), 200, { 'X-Trace-Id': traceId })
     return jsonResponse(await service.getDecisionLineage(incidentId), 200, { 'X-Trace-Id': traceId })
