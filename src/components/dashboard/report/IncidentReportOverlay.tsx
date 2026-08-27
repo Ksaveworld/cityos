@@ -83,6 +83,8 @@ export default function IncidentReportOverlay({
   view,
   generatedAt,
   initiallyEditing = false,
+  persistenceState = 'offline-demo',
+  persistenceMessage = '离线演示：修改只保留在当前浏览器会话。',
   onApplyPlanEdits,
   onApprovePlan,
   onClose,
@@ -93,7 +95,9 @@ export default function IncidentReportOverlay({
   view: ReportView
   generatedAt: string
   initiallyEditing?: boolean
-  onApplyPlanEdits?: (edits: PlanReportEdits) => void
+  persistenceState?: 'offline-demo' | 'loading' | 'ready' | 'saving' | 'error'
+  persistenceMessage?: string
+  onApplyPlanEdits?: (edits: PlanReportEdits) => boolean | Promise<boolean>
   onApprovePlan?: (planId: string) => void
   onClose: () => void
 }) {
@@ -107,6 +111,7 @@ export default function IncidentReportOverlay({
   const isPlan = view === 'plan'
   const editLocked = ['delivered', 'acknowledged', 'executing', 'completed'].includes(savedSession.deliveryStatus)
   const [isEditing, setIsEditing] = useState(isPlan && initiallyEditing && !editLocked)
+  const [isApplying, setIsApplying] = useState(false)
   const baselineDraft = useMemo(
     () => createReportDraft(savedSession, selectedPlan.id),
     [savedSession, selectedPlan.id],
@@ -143,23 +148,30 @@ export default function IncidentReportOverlay({
   const session = savedSession
   const resetDraft = useCallback(() => setDraft(createReportDraft(savedSession, selectedPlan.id)), [savedSession, selectedPlan.id])
   const cancelEditing = useCallback(() => {
+    if (isApplying) return
     if (draftDirty && !window.confirm('放弃尚未应用的方案修改吗？')) return
     resetDraft()
     setIsEditing(false)
     requestAnimationFrame(() => headingRef.current?.focus())
-  }, [draftDirty, resetDraft])
+  }, [draftDirty, isApplying, resetDraft])
   const requestClose = useCallback(() => {
+    if (isApplying) return
     if (isEditing && draftDirty && !window.confirm('当前方案修改尚未应用，关闭报告后将丢失。是否继续？')) return
     onClose()
-  }, [draftDirty, isEditing, onClose])
+  }, [draftDirty, isApplying, isEditing, onClose])
   const beginEditing = () => {
     resetDraft()
     setIsEditing(true)
   }
-  const applyDraft = () => {
-    if (!draftDirty || editLocked || !onApplyPlanEdits) return
-    onApplyPlanEdits({ ...draft, decisionNote: draft.decisionNote.trim() })
-    setIsEditing(false)
+  const applyDraft = async () => {
+    if (!draftDirty || editLocked || isApplying || !onApplyPlanEdits) return
+    setIsApplying(true)
+    try {
+      const applied = await onApplyPlanEdits({ ...draft, decisionNote: draft.decisionNote.trim() })
+      if (applied) setIsEditing(false)
+    } finally {
+      setIsApplying(false)
+    }
   }
 
   useEffect(() => {
@@ -464,9 +476,22 @@ export default function IncidentReportOverlay({
                   <div><dt>联动范围</dt><dd>ETA、覆盖风险、资源总览、任务包与报告版本</dd></div>
                 </dl>
                 <p className="report-editor-boundary">A/B 方案本身不直接编造新的数值公式；ETA 与风险仅由资源数量及三类调度选项重算。</p>
+                <p
+                  role="status"
+                  aria-live="polite"
+                  className={`rounded-lg px-2 py-1.5 text-footnote leading-relaxed ${
+                    persistenceState === 'error'
+                      ? 'bg-[#FDF0F0] text-[#A3373C]'
+                      : persistenceState === 'offline-demo'
+                        ? 'bg-[#FFF7E6] text-[#8A5A14]'
+                        : 'bg-[#EEF4FF] text-[#2768CA]'
+                  }`}
+                >
+                  {persistenceMessage}
+                </p>
                 <div className="report-editor-actions">
-                  <button type="button" onClick={cancelEditing}><RotateCcw size={13} />取消修改</button>
-                  <button type="button" disabled={!draftDirty || editLocked} onClick={applyDraft}><Save size={13} />应用修改并重算</button>
+                  <button type="button" disabled={isApplying} onClick={cancelEditing}><RotateCcw size={13} />取消修改</button>
+                  <button type="button" disabled={!draftDirty || editLocked || isApplying} onClick={applyDraft}><Save size={13} />{isApplying ? '正在保存…' : '应用修改并重算'}</button>
                 </div>
               </aside>
             </div>

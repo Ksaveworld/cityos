@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   ArrowRight,
@@ -19,6 +19,13 @@ import type { ExecutionPlaybackState } from '../execution/executionPlayback'
 import { StationCasePanel } from '../historical/StationCasePanel'
 import { STATION_HISTORY_SOURCE, STATION_SIMULATION_RUNS } from '../historical/stationHistory'
 import { OriginMark } from '../Provenance'
+import {
+  CityosApiError,
+  createCityosApiClient,
+  createCityosIdempotencyKey,
+  resolveCityosBackendMode,
+  supportsWorkflowReportPersistence,
+} from '../dispatch/cityosApi'
 
 import { CommandTaskPackageCard, resolveAssignments, TaskPackageCard } from './ApprovedOutputs'
 import {
@@ -26,6 +33,7 @@ import {
   advanceDelivery,
   applyPlanReportEdits,
   approveWorkflow,
+  hydrateWorkflowReportVersion,
   markDeliveryAbnormal,
   runControlledRetry,
   selectPlan,
@@ -37,6 +45,15 @@ import type { BriefCorrections, BriefItem, DataLabel, DomainFixture, InputMode, 
 
 const IncidentReportOverlay = lazy(() => import('../report/IncidentReportOverlay'))
 type ReportView = 'brief' | 'plan' | 'command-task' | 'task' | 'result'
+type ReportPersistenceState = 'offline-demo' | 'loading' | 'ready' | 'saving' | 'error'
+
+const cityosApi = createCityosApiClient()
+const cityosBackendMode = resolveCityosBackendMode()
+const DEMO_REPORT_ACTOR = 'demo-workflow-operator'
+
+function persistenceErrorMessage(error: unknown) {
+  return error instanceof CityosApiError ? error.failure.message : '在线报告保存暂时不可用。'
+}
 
 function reportTimestamp() {
   return new Intl.DateTimeFormat('zh-CN', {
@@ -70,11 +87,23 @@ export function WorkflowSimulationPanel({
   onOpenResources: () => void
   forceStandardExecution?: boolean
 }) {
+  const reportPersistenceEnabled = cityosBackendMode === 'api'
+    && supportsWorkflowReportPersistence(fixture.scenarioId)
   const [reportView, setReportView] = useState<ReportView | null>(null)
   const [reportPlanId, setReportPlanId] = useState<string | null>(null)
   const [reportGeneratedAt, setReportGeneratedAt] = useState('')
   const [reportInitiallyEditing, setReportInitiallyEditing] = useState(false)
+  const [reportPersistence, setReportPersistence] = useState<{
+    state: ReportPersistenceState
+    message: string
+  }>(() => reportPersistenceEnabled
+    ? { state: 'loading', message: '正在读取在线报告版本…' }
+    : { state: 'offline-demo', message: '离线演示：修改只保留在当前浏览器会话。' })
   const reportTriggerRef = useRef<HTMLElement | null>(null)
+  const sessionRef = useRef(session)
+  const loadedScenarioRef = useRef<string | null>(null)
+  const saveAttemptRef = useRef<{ signature: string; key: string } | null>(null)
+  sessionRef.current = session
   const normalizedStep = Math.min(8, Math.max(0, activeStep === 5 ? 4 : activeStep))
   const selectedPlan = fixture.plans.find((plan) => plan.id === session.selectedPlanId) ?? fixture.plans[0]
   const reportPlan = fixture.plans.find((plan) => plan.id === reportPlanId) ?? selectedPlan
@@ -104,16 +133,113 @@ export function WorkflowSimulationPanel({
     setReportInitiallyEditing(initiallyEditing)
     setReportView('plan')
   }
-  const applyReportEdits = useCallback((edits: PlanReportEdits) => {
-    if (['delivered', 'acknowledged', 'executing', 'completed'].includes(session.deliveryStatus)) return
-    const next = applyPlanReportEdits(fixture, session, edits)
-    if (next === session) return
-    onChange(next)
-    setReportPlanId(next.selectedPlanId)
-    setReportGeneratedAt(reportTimestamp())
-    setReportInitiallyEditing(false)
-    onStepChange(4)
-  }, [fixture, onChange, onStepChange, session])
+
+  useEffect(() => {
+    if (!reportPersistenceEnabled) {
+      loadedScenarioRef.current = null
+      setReportPersistence({
+        state: 'offline-demo',
+        message: supportsWorkflowReportPersistence(fixture.scenarioId)
+          ? '离线演示：修改只保留在当前浏览器会话。'
+          : '历史复盘场景未接入在线报告库；修改只保留在当前会话。',
+      })
+      return
+    }
+    if (loadedScenarioRef.current === fixture.scenarioId) return
+    const controller = new AbortController()
+    setReportPersistence({ state: 'loading', message: '正在读取在线报告版本…' })
+    cityosApi.getWorkflowReport(fixture.scenarioId, controller.signal)
+      .then((persisted) => {
+        if (controller.signal.aborted) return
+        loadedScenarioRef.current = fixture.scenarioId
+        const current = sessionRef.current
+        const hydrated = hydrateWorkflowReportVersion(fixture, current, persisted)
+        if (hydrated !== current) {
+          onChange(hydrated)
+          onStepChange(4)
+        }
+        setReportPersistence({
+          state: 'ready',
+          message: persisted.storageState === 'persisted'
+            ? `已连接在线报告 v${persisted.version}。`
+            : '已连接在线后端；当前仍是 fixture v1 基线。',
+        })
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return
+        setReportPersistence({ state: 'error', message: persistenceErrorMessage(error) })
+      })
+    return () => controller.abort()
+  }, [fixture, onChange, onStepChange, reportPersistenceEnabled])
+
+  const applyReportEdits = useCallback(async (edits: PlanReportEdits) => {
+    const current = sessionRef.current
+    if (['delivered', 'acknowledged', 'executing', 'completed'].includes(current.deliveryStatus)) return false
+    const next = applyPlanReportEdits(fixture, current, edits)
+    if (next === current) return true
+
+    const finishLocalChange = (saved: WorkflowSession) => {
+      onChange(saved)
+      setReportPlanId(saved.selectedPlanId)
+      setReportGeneratedAt(reportTimestamp())
+      setReportInitiallyEditing(false)
+      onStepChange(4)
+    }
+    if (!reportPersistenceEnabled) {
+      finishLocalChange(next)
+      setReportPersistence({ state: 'offline-demo', message: '离线演示：修改只保留在当前浏览器会话。' })
+      return true
+    }
+
+    const reportDraft: PlanReportEdits = {
+      selectedPlanId: next.selectedPlanId,
+      resourceCount: next.resourceCount,
+      fireOptionId: next.fireOptionId,
+      medicalOptionId: next.medicalOptionId,
+      trafficOptionId: next.trafficOptionId,
+      decisionNote: next.decisionNote,
+    }
+    const input = { expectedVersion: current.planVersion, reportDraft }
+    const signature = JSON.stringify(input)
+    if (saveAttemptRef.current?.signature !== signature) {
+      saveAttemptRef.current = {
+        signature,
+        key: createCityosIdempotencyKey(`workflow-report:${fixture.scenarioId}`),
+      }
+    }
+    setReportPersistence({ state: 'saving', message: '正在保存在线报告版本…' })
+    try {
+      const persisted = await cityosApi.saveWorkflowReport(fixture.scenarioId, input, {
+        actorId: DEMO_REPORT_ACTOR,
+        idempotencyKey: saveAttemptRef.current.key,
+        mode: 'demo',
+      })
+      saveAttemptRef.current = null
+      loadedScenarioRef.current = fixture.scenarioId
+      const hydrated = hydrateWorkflowReportVersion(fixture, current, persisted)
+      finishLocalChange(hydrated)
+      setReportPersistence({ state: 'ready', message: `在线报告 v${persisted.version} 已保存；仍需人工批准。` })
+      return true
+    } catch (error) {
+      if (error instanceof CityosApiError && error.failure.code === 'WORKFLOW_VERSION_CONFLICT') {
+        saveAttemptRef.current = null
+        try {
+          const latest = await cityosApi.getWorkflowReport(fixture.scenarioId)
+          const hydrated = hydrateWorkflowReportVersion(fixture, sessionRef.current, latest)
+          if (hydrated !== sessionRef.current) onChange(hydrated)
+        } catch {
+          // 原编辑草案仍由报告编辑器保留；下一次应用会重新读取当前会话版本。
+        }
+        setReportPersistence({
+          state: 'error',
+          message: '在线版本已更新；当前编辑草案仍保留，请核对后再次应用。',
+        })
+        return false
+      }
+      setReportPersistence({ state: 'error', message: persistenceErrorMessage(error) })
+      return false
+    }
+  }, [fixture, onChange, onStepChange, reportPersistenceEnabled])
   const approveReportPlan = useCallback((planId: string) => {
     if (['delivered', 'acknowledged', 'executing', 'completed'].includes(session.deliveryStatus)) return
     const switchedApproval = session.approvedVersion === session.planVersion
@@ -137,6 +263,8 @@ export function WorkflowSimulationPanel({
         view={reportView}
         generatedAt={reportGeneratedAt}
         initiallyEditing={reportInitiallyEditing}
+        persistenceState={reportPersistence.state}
+        persistenceMessage={reportPersistence.message}
         onApplyPlanEdits={applyReportEdits}
         onApprovePlan={approveReportPlan}
         onClose={closeReport}

@@ -1,14 +1,17 @@
-import type {
-  ActionRunResponse,
-  AdapterEventResponse,
-  AdjustResourcesPreviewInput,
-  BoardResponse,
-  ConfirmActionRunInput,
-  DataMode,
-  DecisionLineageEntry,
-  ExecuteActionRunInput,
-  ExecuteResult,
-  FacilityStatusChangedInput,
+import {
+  WORKFLOW_SCENARIO_IDS,
+  type ActionRunResponse,
+  type AdapterEventResponse,
+  type AdjustResourcesPreviewInput,
+  type BoardResponse,
+  type ConfirmActionRunInput,
+  type DataMode,
+  type DecisionLineageEntry,
+  type ExecuteActionRunInput,
+  type ExecuteResult,
+  type FacilityStatusChangedInput,
+  type SaveWorkflowReportInput,
+  type WorkflowReportVersion,
 } from '../../../../server/cityos/types.ts'
 
 export type CityosBackendMode = 'api' | 'offline-demo'
@@ -43,10 +46,16 @@ export interface CityosApiClient {
   getBoard(incidentId: string, signal?: AbortSignal): Promise<BoardResponse>
   getActionRun(actionRunId: string, signal?: AbortSignal): Promise<ActionRunResponse>
   getDecisionLineage(incidentId: string, signal?: AbortSignal): Promise<{ items: DecisionLineageEntry[] }>
+  getWorkflowReport(scenarioId: string, signal?: AbortSignal): Promise<WorkflowReportVersion>
   ingestFacilityStatus(input: FacilityStatusChangedInput, context: CityosWriteContext): Promise<AdapterEventResponse>
   previewAdjustResources(input: AdjustResourcesPreviewInput, context: CityosWriteContext): Promise<ActionRunResponse>
   confirmActionRun(actionRunId: string, input: ConfirmActionRunInput, context: CityosWriteContext): Promise<ActionRunResponse>
   executeActionRun(actionRunId: string, context: CityosWriteContext): Promise<ExecuteResult>
+  saveWorkflowReport(
+    scenarioId: string,
+    input: SaveWorkflowReportInput,
+    context: CityosWriteContext,
+  ): Promise<WorkflowReportVersion>
 }
 
 interface CityosApiClientOptions {
@@ -96,6 +105,10 @@ async function readJson(response: Response) {
 
 export function resolveCityosBackendMode(value = import.meta.env.VITE_CITYOS_BACKEND_MODE): CityosBackendMode {
   return value === 'api' ? 'api' : 'offline-demo'
+}
+
+export function supportsWorkflowReportPersistence(scenarioId: string) {
+  return WORKFLOW_SCENARIO_IDS.some((candidate) => candidate === scenarioId)
 }
 
 export function createCityosIdempotencyKey(scope: string) {
@@ -150,6 +163,9 @@ export function createCityosApiClient(options: CityosApiClientOptions = {}): Cit
     getDecisionLineage(incidentId, signal) {
       return request<{ items: DecisionLineageEntry[] }>(`/v1/incidents/${encodePathSegment(incidentId)}/decision-lineage`, { signal })
     },
+    getWorkflowReport(scenarioId, signal) {
+      return request<WorkflowReportVersion>(`/v1/workflow-scenarios/${encodePathSegment(scenarioId)}/report`, { signal })
+    },
     ingestFacilityStatus(input, context) {
       return write<AdapterEventResponse>('/v1/adapter-events', input, context)
     },
@@ -162,6 +178,13 @@ export function createCityosApiClient(options: CityosApiClientOptions = {}): Cit
     executeActionRun(actionRunId, context) {
       const input: ExecuteActionRunInput = { expectedStatus: 'confirmed' }
       return write<ExecuteResult>(`/v1/action-runs/${encodePathSegment(actionRunId)}/execute`, input, context)
+    },
+    saveWorkflowReport(scenarioId, input, context) {
+      return write<WorkflowReportVersion>(
+        `/v1/workflow-scenarios/${encodePathSegment(scenarioId)}/report`,
+        input,
+        context,
+      )
     },
   }
 }

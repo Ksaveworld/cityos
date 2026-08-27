@@ -1,6 +1,6 @@
 import type { DomainFixture, PlanReportEdits, RecalculatedMetrics, TaskDispatchOverride, WorkflowSession } from './types'
 
-export function workflowTimestamp() {
+function formatWorkflowTimestamp(date: Date) {
   return new Intl.DateTimeFormat('zh-CN', {
     timeZone: 'Asia/Shanghai',
     year: 'numeric',
@@ -10,7 +10,11 @@ export function workflowTimestamp() {
     minute: '2-digit',
     second: '2-digit',
     hour12: false,
-  }).format(new Date()).replaceAll('/', '-')
+  }).format(date).replaceAll('/', '-')
+}
+
+export function workflowTimestamp() {
+  return formatWorkflowTimestamp(new Date())
 }
 
 export function recalculateMetrics(
@@ -37,6 +41,31 @@ export function recalculateMetrics(
     + traffic.coverageDelta
   const coverageRisk = coverageScore >= 75 ? '较低' : coverageScore >= 62 ? '注意' : '较高'
   return { etaMinutes: Math.round(etaMinutes * 10) / 10, coverageRisk }
+}
+
+function normalizePlanReportEdits(
+  fixture: DomainFixture,
+  session: WorkflowSession,
+  edits: PlanReportEdits,
+): PlanReportEdits {
+  const selectedPlanId = fixture.plans.some((plan) => plan.id === edits.selectedPlanId)
+    ? edits.selectedPlanId
+    : session.selectedPlanId
+  const requestedResourceCount = Number.isFinite(edits.resourceCount) ? Math.round(edits.resourceCount) : session.resourceCount
+  const resourceCount = Math.min(
+    fixture.maxResources,
+    Math.max(fixture.minResources, requestedResourceCount),
+  )
+  const validOption = (lever: DomainFixture['fireDispatch'], candidate: string, fallback: string) =>
+    lever.options.some((option) => option.id === candidate) ? candidate : fallback
+  return {
+    selectedPlanId,
+    resourceCount,
+    fireOptionId: validOption(fixture.fireDispatch, edits.fireOptionId, session.fireOptionId),
+    medicalOptionId: validOption(fixture.medicalDispatch, edits.medicalOptionId, session.medicalOptionId),
+    trafficOptionId: validOption(fixture.trafficDispatch, edits.trafficOptionId, session.trafficOptionId),
+    decisionNote: edits.decisionNote.trim(),
+  }
 }
 
 export function createWorkflowSession(fixture: DomainFixture): WorkflowSession {
@@ -192,24 +221,7 @@ export function applyPlanReportEdits(
 ): WorkflowSession {
   if (['delivered', 'acknowledged', 'executing', 'completed'].includes(session.deliveryStatus)) return session
 
-  const selectedPlanId = fixture.plans.some((plan) => plan.id === edits.selectedPlanId)
-    ? edits.selectedPlanId
-    : session.selectedPlanId
-  const requestedResourceCount = Number.isFinite(edits.resourceCount) ? Math.round(edits.resourceCount) : session.resourceCount
-  const resourceCount = Math.min(
-    fixture.maxResources,
-    Math.max(fixture.minResources, requestedResourceCount),
-  )
-  const validOption = (lever: DomainFixture['fireDispatch'], candidate: string, fallback: string) =>
-    lever.options.some((option) => option.id === candidate) ? candidate : fallback
-  const normalized: PlanReportEdits = {
-    selectedPlanId,
-    resourceCount,
-    fireOptionId: validOption(fixture.fireDispatch, edits.fireOptionId, session.fireOptionId),
-    medicalOptionId: validOption(fixture.medicalDispatch, edits.medicalOptionId, session.medicalOptionId),
-    trafficOptionId: validOption(fixture.trafficDispatch, edits.trafficOptionId, session.trafficOptionId),
-    decisionNote: edits.decisionNote.trim(),
-  }
+  const normalized = normalizePlanReportEdits(fixture, session, edits)
   const changed = normalized.selectedPlanId !== session.selectedPlanId
     || normalized.resourceCount !== session.resourceCount
     || normalized.fireOptionId !== session.fireOptionId
@@ -231,6 +243,43 @@ export function applyPlanReportEdits(
     invalidationReason: session.approvedPlanId
       ? '方案报告核心字段已修改；原批准和任务包已失效。'
       : adjusted.invalidationReason,
+  }
+}
+
+export function hydrateWorkflowReportVersion(
+  fixture: DomainFixture,
+  session: WorkflowSession,
+  persisted: { version: number; reportDraft: PlanReportEdits | null; updatedAt?: number },
+): WorkflowSession {
+  if (!persisted.reportDraft || persisted.version <= session.planVersion) return session
+  if (['delivered', 'acknowledged', 'executing', 'completed'].includes(session.deliveryStatus)) return session
+
+  const normalized = normalizePlanReportEdits(fixture, session, persisted.reportDraft)
+  const metrics = recalculateMetrics(
+    fixture,
+    normalized.resourceCount,
+    normalized.fireOptionId,
+    normalized.medicalOptionId,
+    normalized.trafficOptionId,
+  )
+  return {
+    ...session,
+    ...normalized,
+    inputValidated: true,
+    stage: 'strategy',
+    planVersion: persisted.version,
+    versionUpdatedAt: persisted.updatedAt
+      ? formatWorkflowTimestamp(new Date(persisted.updatedAt * 1000))
+      : workflowTimestamp(),
+    approvedPlanId: null,
+    approvedVersion: null,
+    etaMinutes: metrics.etaMinutes,
+    coverageRisk: metrics.coverageRisk,
+    deliveryStatus: 'draft',
+    executionStartedAt: null,
+    firstArrivalAt: null,
+    executionCompletedAt: null,
+    invalidationReason: null,
   }
 }
 

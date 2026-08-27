@@ -6,6 +6,7 @@ import {
   applyPlanReportEdits,
   approveWorkflow,
   createWorkflowSession,
+  hydrateWorkflowReportVersion,
   recalculateMetrics,
   sendSimulatedTasks,
 } from './state.ts'
@@ -95,4 +96,36 @@ test('a decision-note-only edit still creates one auditable plan version', () =>
   assert.equal(edited.approvedPlanId, null)
   assert.equal(edited.approvedVersion, null)
   assert.equal(edited.deliveryStatus, 'draft')
+})
+
+test('a persisted report version hydrates without incrementing it again', () => {
+  const fixture = WORKFLOW_FIXTURES.find((item) => item.scenarioId === 'yuexiu-medical') ?? WORKFLOW_FIXTURES[0]
+  const approved = approveWorkflow(createWorkflowSession(fixture))
+  const targetPlan = fixture.plans.at(-1) ?? fixture.plans[0]
+  const hydrated = hydrateWorkflowReportVersion(fixture, approved, {
+    version: 7,
+    updatedAt: 1787875200,
+    reportDraft: {
+      selectedPlanId: targetPlan.id,
+      resourceCount: fixture.maxResources,
+      fireOptionId: fixture.fireDispatch.options.at(-1)?.id ?? approved.fireOptionId,
+      medicalOptionId: fixture.medicalDispatch.options.at(-1)?.id ?? approved.medicalOptionId,
+      trafficOptionId: fixture.trafficDispatch.options.at(-1)?.id ?? approved.trafficOptionId,
+      decisionNote: '线上保存的人工说明',
+    },
+  })
+
+  assert.equal(hydrated.planVersion, 7)
+  assert.equal(hydrated.selectedPlanId, targetPlan.id)
+  assert.equal(hydrated.decisionNote, '线上保存的人工说明')
+  assert.equal(hydrated.approvedPlanId, null)
+  assert.equal(hydrated.approvedVersion, null)
+  assert.equal(hydrated.deliveryStatus, 'draft')
+  assert.equal(hydrated.stage, 'strategy')
+
+  assert.equal(hydrateWorkflowReportVersion(fixture, hydrated, {
+    version: 7,
+    updatedAt: 1787875200,
+    reportDraft: hydrated,
+  }), hydrated)
 })
