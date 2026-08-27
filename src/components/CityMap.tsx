@@ -61,6 +61,10 @@ import {
   type CommandTrafficRouteAnnotation,
   type CommandTrafficUnitMarkerDatum,
 } from '@/components/dashboard/dispatch/CommandTrafficMapMarkers'
+import {
+  getTrafficStrategyRoute,
+  TRAFFIC_STRATEGY_ROUTES,
+} from '@/components/dashboard/dispatch/trafficStrategyRoutes'
 import type {
   ExecutionFrame,
   ExecutionIntersectionFrame,
@@ -1705,8 +1709,8 @@ export const CityMap = memo(function CityMap({
     const routeRole = executionFrame.units[0]?.routeRole
     if (scenarioVariant === 'traffic' && executionFrame.definitionId === 'traffic-zhongshan-reroute') {
       // 交通工作台用 secondary / medical 分别绑定冻结后的 B / C 路网几何。
-      if (routeRole === 'secondary') return '路线 B · 原最短 8 分钟 · 已受阻'
-      if (routeRole === 'medical') return '路线 C · 推荐改线 10 分钟'
+      if (routeRole === 'secondary') return getTrafficStrategyRoute('B').displayLabel
+      if (routeRole === 'medical') return getTrafficStrategyRoute('C').displayLabel
     }
     if (scenarioVariant === 'medical' && executionFrame.definitionId === 'medical-panfu-transfer') {
       return DISPATCH_FACILITIES.find((facility) => facility.route.role === routeRole)?.route.displayLabel ?? null
@@ -1726,24 +1730,21 @@ export const CityMap = memo(function CityMap({
     if (scenarioVariant !== 'traffic') return []
     const trafficRoutes = scenarioPaths.filter((path) => path.layer === 'routes' && path.path.length >= 2)
     return trafficRoutes.flatMap((route) => {
-      const label = route.displayLabel ?? ''
-      const routeId = label.match(/路线 ([ABC])/)?.[1]
-      if (routeId !== 'A' && routeId !== 'B' && routeId !== 'C') return []
-      const time = label.match(/(\d+) 分钟/)?.[1]
-      if (!time) return []
-      const status = routeId === 'A' ? '常规' : routeId === 'B' ? '最短 · 受阻' : '推荐改线'
+      const option = TRAFFIC_STRATEGY_ROUTES.find((candidate) => candidate.displayLabel === route.displayLabel)
+      if (!option) return []
       return [{
-        routeId,
-        title: label,
-        time: `${time} 分钟`,
-        status,
+        routeId: option.id,
+        title: option.displayLabel,
+        time: `${option.role === 'current-blocked' ? '原 ' : ''}ETA ${option.etaMinutes} 分钟`,
+        status: option.mapStatus,
         color: `rgb(${route.color[0]} ${route.color[1]} ${route.color[2]})`,
         path: route.path,
+        labelOffset: option.labelOffset,
         labelPosition: separatedRouteLabelPosition(
           route.path,
           trafficRoutes.filter((candidate) => candidate !== route).map((candidate) => candidate.path),
         ),
-        active: label === activeScenarioRouteLabel,
+        active: option.displayLabel === activeScenarioRouteLabel,
       }]
     })
   }, [activeScenarioRouteLabel, scenarioPaths, scenarioVariant])

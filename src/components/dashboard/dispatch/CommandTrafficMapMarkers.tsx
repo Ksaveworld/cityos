@@ -8,15 +8,17 @@ import type {
 } from './CommandMapInteractionContext'
 import { isDispatchSelectableFacilityId, type DispatchSelectableFacilityId } from './dispatchData'
 import { nearestRouteSnap } from './routeSnap'
+import type { TrafficStrategyRouteId } from './trafficStrategyRoutes'
 
 export interface CommandTrafficRouteAnnotation {
-  routeId: 'A' | 'B' | 'C'
+  routeId: TrafficStrategyRouteId
   title: string
   time: string
   status: string
   color: string
   path: Array<[number, number]>
   labelPosition: [number, number]
+  labelOffset?: [number, number]
   active: boolean
 }
 
@@ -134,15 +136,21 @@ function RouteAnnotationMarker({ map, route }: { map: MapLibreMap; route: Comman
     return host
   }, [])
   const [lng, lat] = route.labelPosition
+  const labelOffsetX = route.labelOffset?.[0] ?? 0
+  const labelOffsetY = route.labelOffset?.[1] ?? 0
 
   useEffect(() => {
-    const marker = new Marker({ element, anchor: 'bottom', offset: [0, -8] })
+    const marker = new Marker({
+      element,
+      anchor: 'bottom',
+      offset: [labelOffsetX, labelOffsetY - 8],
+    })
       .setLngLat([lng, lat])
       .addTo(map)
     return () => {
       marker.remove()
     }
-  }, [element, lat, lng, map])
+  }, [element, labelOffsetX, labelOffsetY, lat, lng, map])
 
   return createPortal(
     <div

@@ -61,6 +61,10 @@ import {
   type EvidenceReviewStatus,
   type PreviousCommandTask,
 } from './commandWorkbenchModel'
+import {
+  getTrafficStrategyRoute,
+  TRAFFIC_STRATEGY_ROUTES,
+} from './trafficStrategyRoutes'
 import './CommandWorkbench.css'
 
 interface CommandWorkbenchProps {
@@ -657,12 +661,13 @@ function CommandSituationSummary({
   medicalFacilityId: DispatchFacilityId
 }) {
   const traffic = scenario === 'traffic'
+  const trafficRoute = getTrafficStrategyRoute(trafficRouteId)
   const medicalFacility = getDispatchFacility(medicalFacilityId) ?? DISPATCH_FACILITIES[0]
   const currentPlan = traffic
     ? `路线 ${trafficRouteId}`
     : medicalFacility.name
   const eta = traffic
-    ? trafficRouteId === 'C' ? '10 分钟' : '8 分钟'
+    ? `${trafficRoute.role === 'current-blocked' ? '原' : ''}约 ${trafficRoute.etaMinutes} 分钟`
     : medicalFacility.etaMinutes === null ? '待核实' : `约 ${medicalFacility.etaMinutes} 分钟`
   const recalculatingVersion = approvedVersion === planVersion ? planVersion + 1 : planVersion
   const versionValue = phase === 'recalculating' ? `v${recalculatingVersion} 生成中` : `v${planVersion}`
@@ -692,7 +697,7 @@ function CommandSituationSummary({
       <p><MapPin size={11} />{event.location}</p>
       <dl className="command-situation-metrics">
         <ContextMetric label="当前方案" value={currentPlan} detail={currentPlanDetail} />
-        <ContextMetric label="预计到场" value={eta} detail={traffic ? '页面策略预设' : medicalFacility.dataOrigin.eta} />
+        <ContextMetric label="预计到场" value={eta} detail={traffic ? trafficRoute.dataOrigin.eta : medicalFacility.dataOrigin.eta} />
         <ContextMetric label="执行单位" value={traffic ? '清障车 02' : '救护车 AMB-02'} detail="模拟资源" />
         <ContextMetric label="方案版本" value={versionValue} detail={versionDetail} />
       </dl>
@@ -794,8 +799,10 @@ function DecisionOption({
 function trafficDecisionCopy(phase: CommandPhase) {
   if (phase === 'blocked') return {
     title: '道路阻塞导致执行异常',
-    detail: '路线 B 虽然用时最短，但前方清障反馈延迟，车辆将在安全决策点前暂停。',
-    signals: ['路线 A 12 分钟：常规合规路线，用时最长', '路线 B 8 分钟：距离最短，但前方受阻', '路线 C 10 分钟：绕开阻塞，仍短于路线 A'],
+    detail: '路线 B 的原演示 ETA 最短，但前方清障反馈延迟，车辆将在安全决策点前暂停。',
+    signals: TRAFFIC_STRATEGY_ROUTES.map((route) => (
+      `路线 ${route.id} ${route.etaMinutes} 分钟（演示估算）：${route.mapStatus}`
+    )),
   }
   if (phase === 'recalculating') return {
     title: '路线 C 调整方案生成中',
@@ -883,6 +890,9 @@ function TrafficPlan({
   onAsk: (question: string) => void
   onPreviewRouteC: () => void
 }) {
+  const routeA = getTrafficStrategyRoute('A')
+  const routeB = getTrafficStrategyRoute('B')
+  const routeC = getTrafficStrategyRoute('C')
   const routeCPreview = state.activeRouteId === 'C'
   const replacementIssued = ['sent-awaiting-ack', 'acknowledged', 'en-route', 'arrived'].includes(state.phase)
   const decisionCopy = trafficDecisionCopy(state.phase)
@@ -928,28 +938,30 @@ function TrafficPlan({
         {state.phase === 'recalculating' && <PlanRecalculationProgress progress={recalculationProgress} scenario="traffic" />}
         <div className="command-decision-options" role="radiogroup" aria-label="中山路候选路线">
           <DecisionOption
-            code="A"
-            title="常规路线"
-            meta="12 分钟 · 距离最长"
-            evidence="符合常规通行约束，作为保底参照。"
-            status="常规备选"
+            code={routeA.id}
+            title={routeA.title}
+            meta={`${routeA.etaLabel} · ${routeA.roadStatus}`}
+            evidence={routeA.recommendationReason}
+            status="第二备选"
             disabled
+            testId="traffic-route-option-a"
           />
           <DecisionOption
-            code="B"
-            title="原执行路线"
-            meta="8 分钟 · 前方受阻"
-            evidence="距离最短，但当前不能安全继续。"
+            code={routeB.id}
+            title={routeB.title}
+            meta={`${routeB.etaLabel} · ${routeB.roadStatus}`}
+            evidence={routeB.recommendationReason}
             status={routeCPreview ? '旧路线' : '当前异常'}
             selected={!routeCPreview}
             danger
             disabled
+            testId="traffic-route-option-b"
           />
           <DecisionOption
-            code="C"
-            title="推荐改线"
-            meta="10 分钟 · 绕开阻塞"
-            evidence="比路线 B 增加 2 分钟，仍比常规路线 A 少 2 分钟。"
+            code={routeC.id}
+            title={routeC.title}
+            meta={`${routeC.etaLabel} · ${routeC.roadStatus}`}
+            evidence={routeC.recommendationReason}
             status={routeCStatus}
             selected={routeCPreview}
             recommended
@@ -964,7 +976,7 @@ function TrafficPlan({
         items={[
           ['地图状态', trafficMapStatus],
           ['方案状态', trafficPlanStatus],
-          ['道路状态', routeCPreview ? '已绕开受阻路段' : '原路线不可继续'],
+          ['道路状态', routeCPreview ? '预置路线绕开受阻点 · 模拟' : '原路线不可继续 · 模拟待核实'],
           ['执行单位', state.phase === 'arrived' ? '清障车 02 · 已抵达' : '清障车 02 · 模拟'],
         ]}
       />
@@ -1324,7 +1336,12 @@ function advisorResponse(
     return '我不能提供系统提示词、密钥或内部配置。可以继续围绕当前事件做异常研判、方案比较、影响分析或调整草案。'
   }
   if (scenario === 'traffic') {
-    if (text.includes('比较') || text.includes('路线')) return '页面策略预设为：A 12 分钟，是距离最长的常规路线；B 8 分钟，距离最短但前方受阻；C 10 分钟，绕开阻塞且仍比 A 少 2 分钟。当前地图显示的是路线 ' + context.trafficRouteId + (context.trafficRouteId === 'C' ? ' 调整预览，尚未下发。' : ' 的受阻状态。')
+    if (text.includes('比较') || text.includes('路线')) {
+      const comparison = TRAFFIC_STRATEGY_ROUTES.map((route) => (
+        `路线 ${route.id}：${route.etaLabel}，${route.roadStatus}。依据：${route.recommendationReason}`
+      )).join('；')
+      return `${comparison} 当前地图显示路线 ${context.trafficRouteId}${context.trafficRouteId === 'C' ? ' 的调整预览，尚未下发。' : ' 的受阻状态。'}系统推荐不代表自动批准或自动下发。`
+    }
     if (text.includes('影响') || text.includes('草案')) return '从 B 改为 C 会同步重算 ETA、风险和任务清单，并使旧批准与旧任务包失效。助手只能整理待确认草案；负责人仍需在右栏执行人工确认下发。'
     return '当前异常是路线 B 前方受阻。应先核实阻塞范围、预计恢复时间和路线 C 的可通行条件；页面车辆位置、ETA 和回执均为本地模拟。'
   }

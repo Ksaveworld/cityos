@@ -1127,7 +1127,7 @@ button.command-route-preview:hover {
 
 .command-decision-copy small {
   margin-top: 2px;
-  color: #8c4549;
+  color: #526176;
   font-size: 8px;
 }
 
@@ -1148,8 +1148,10 @@ button.command-route-preview:hover {
 }
 
 .command-decision-option.is-danger .command-decision-code { background: #fdebed; color: #ad3b44; }
+.command-decision-option.is-danger .command-decision-copy small { color: #8c4549; }
 .command-decision-option.is-danger > b { background: #fdebed; color: #ad3b44; }
 .command-decision-option.is-recommended .command-decision-code { background: #e8f7ef; color: #237a52; }
+.command-decision-option.is-recommended .command-decision-copy small { color: #386e59; }
 .command-decision-option.is-recommended > b { background: #fff5de; color: #946114; }
 .command-decision-option.is-selected { border-color: #b5b5ed; background: #fff; box-shadow: inset 3px 0 #5b5bd6; }
 

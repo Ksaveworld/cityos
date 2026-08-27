@@ -6,6 +6,7 @@ import type { PoiKind } from './map/poiCatalog'
 import { OriginMark } from './Provenance'
 import { DISPATCH_FACILITIES, type DispatchFacilityId } from './dispatch/dispatchData'
 import { getPanfuHospitalPath, PANFU_MEDICAL_INCIDENT } from './dispatch/hospitalStrategyRoutes'
+import { TRAFFIC_STRATEGY_ROUTES } from './dispatch/trafficStrategyRoutes'
 
 export type ScenarioMapVariant = 'routine' | 'police' | 'medical' | 'traffic' | 'urban_order' | 'major'
 
@@ -226,7 +227,6 @@ export const SCENARIO_MAP_CONFIGS: Record<ScenarioMapVariant, ScenarioMapConfig>
       { position: [113.2684, 23.1253], label: '中山路清障作业点（模拟）', kind: 'event', color: RED, poi: 'crash', labelOffset: [14, -48] },
       { position: [113.2628, 23.1215], label: '清障车 02 当前位置（模拟）', kind: 'resource', color: BLUE, poi: 'vehicle', labelOffset: [-12, -10] },
       { position: [113.2654242, 23.1217937], label: '万福路受阻点（模拟）', kind: 'event', color: RED, poi: 'road_closure', labelOffset: [12, 24] },
-      { position: [113.2669931, 23.124355], label: '路线 A 常规规则点（模拟）', kind: 'entry', color: BLUE, hidden: true },
       { position: [113.2644943, 23.121224], label: '阻塞前换道路口（模拟）', kind: 'entry', color: GREEN, poi: 'entry', labelOffset: [-12, 18] },
       { position: [113.2669903, 23.1224768], label: '绕行汇回点（模拟）', kind: 'entry', color: GREEN, poi: 'entry', labelOffset: [12, 18] },
       { position: [113.2661, 23.1254], label: '道路巡查', kind: 'source', color: AMBER, labelOffset: [-12, 14], hidden: true },
@@ -242,32 +242,16 @@ export const SCENARIO_MAP_CONFIGS: Record<ScenarioMapVariant, ScenarioMapConfig>
         state: 'blocked',
         width: 2.4,
       },
-      {
+      ...TRAFFIC_STRATEGY_ROUTES.map((route): ScenarioPointRouteRequest => ({
         fromLabel: '清障车 02 当前位置（模拟）',
         toLabel: '中山路清障作业点（模拟）',
-        avoidRoadAtLabel: '路线 A 常规规则点（模拟）',
-        displayLabel: '路线 A · 常规规则 12 分钟',
-        color: [59, 130, 246, 215],
+        ...(route.presetPath ? { presetPath: route.presetPath } : {}),
+        ...(route.avoidRoadAtLabel ? { avoidRoadAtLabel: route.avoidRoadAtLabel } : {}),
+        displayLabel: route.displayLabel,
+        color: route.color,
         layer: 'routes',
         width: 4,
-      },
-      {
-        fromLabel: '清障车 02 当前位置（模拟）',
-        toLabel: '中山路清障作业点（模拟）',
-        displayLabel: '路线 B · 原最短 8 分钟 · 已受阻',
-        color: [229, 72, 77, 215],
-        layer: 'routes',
-        width: 4,
-      },
-      {
-        fromLabel: '清障车 02 当前位置（模拟）',
-        toLabel: '中山路清障作业点（模拟）',
-        avoidRoadAtLabel: '万福路受阻点（模拟）',
-        displayLabel: '路线 C · 推荐改线 10 分钟',
-        color: [48, 164, 108, 225],
-        layer: 'routes',
-        width: 4,
-      },
+      })),
     ],
   },
   urban_order: {
