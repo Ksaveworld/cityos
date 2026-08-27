@@ -5,6 +5,10 @@
     { "path": "./tsconfig.node.json" }
   ],
   "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "types": ["node"],
+    "rewriteRelativeImportExtensions": true,
     "paths": {
       "@/*": ["./src/*"]
     }
