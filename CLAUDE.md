@@ -2,6 +2,13 @@
 
 爱化身 CITY OS 黑客松参赛项目。城市安全场景的可运行 Demo。
 
+## 当前开发基线（必须先核对）
+
+- 正式开发目录是 `C:\Users\k\Documents\ChatGPT\cityos正式版`，当前开发分支是 `codex/cityos-command-workbench`。
+- `fa1ba5def223d27c4881092902daae69450a1e1e`（短 SHA：`fa1ba5d`）是当前 UI 开发基线。后续代码必须基于该提交或其后代继续，不得从旧备份目录、旧分支或更早提交另起修改。
+- `https://cityos-command-workbench.vercel.app/#/resources` 当前仍对应已部署提交 `c8f8e93663824bdea0f5be3fa0ce91e77025aa2e`；它不包含尚未部署的 `fa1ba5d` UI 改版，不能用线上产物反向覆盖当前开发树。
+- 开始修改前必须检查 `git status --short --branch`，并运行 `git merge-base --is-ancestor fa1ba5d HEAD`。若工作区不干净、祖先校验失败或目录不符，立即停止并报告，不得自行 `reset`、`checkout` 或迁移改动。
+
 ## 一句话
 
 接到火情警单后，自动补齐建筑和资源信息，生成多个响应方案并比较各自后果，由人工确认后生成协同任务。
