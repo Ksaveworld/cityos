@@ -53,6 +53,7 @@ import {
   type DispatchFacilityId,
 } from '@/components/dashboard/dispatch/dispatchData'
 import { useCommandMapInteraction } from '@/components/dashboard/dispatch/CommandMapInteractionContext'
+import { findLinkedDispatchMapOption } from '@/components/dashboard/dispatch/linkedDispatchMapConfig'
 import {
   CommandMedicalMapMarker,
   CommandTrafficMapMarkers,
@@ -502,6 +503,7 @@ interface ScenarioPathDatum {
   endpointLabels: [string, string]
   displayLabel?: string
   dispatchFacilityId?: DispatchFacilityId
+  dispatchOptionId?: string
   roadName?: string
   roadState?: ScenarioRoadState
 }
@@ -585,6 +587,8 @@ interface Props {
   routineHospitalCandidates?: RoutineHospitalTransfer[]
   /** 场景 POI 只有显式传入回调时才可点，避免地图浏览态误吃点击。 */
   onScenarioPointSelect?: (point: ScenarioMapPoint) => void
+  /** 110 / 重大布防右栏草案与地图候选点、路线的共用 ID。 */
+  selectedScenarioOptionId?: string
   /** 在线瓦片不可用时也保留本地路网底纹，便于核对方案路线确实沿道路生成。 */
   showRoadNetworkContext?: boolean
 }
@@ -627,6 +631,7 @@ export const CityMap = memo(function CityMap({
   routineHospitalTransfer = null,
   routineHospitalCandidates = EMPTY_ROUTINE_HOSPITAL_TRANSFERS,
   onScenarioPointSelect,
+  selectedScenarioOptionId = '',
   showRoadNetworkContext = false,
 }: Props) {
   const commandMapInteraction = useCommandMapInteraction()
@@ -1579,6 +1584,7 @@ export const CityMap = memo(function CityMap({
             endpointLabels: [request.fromLabel, request.toLabel],
             displayLabel: request.displayLabel,
             dispatchFacilityId: request.dispatchFacilityId,
+            dispatchOptionId: request.dispatchOptionId,
           })
           continue
         }
@@ -1627,6 +1633,7 @@ export const CityMap = memo(function CityMap({
           endpointLabels: [request.fromLabel, request.toLabel],
           displayLabel: request.displayLabel,
           dispatchFacilityId: request.dispatchFacilityId,
+          dispatchOptionId: request.dispatchOptionId,
         })
         continue
       }
@@ -1704,6 +1711,11 @@ export const CityMap = memo(function CityMap({
     [scenarioRouting.paths, layers],
   )
   const activeScenarioRouteLabel = useMemo(() => {
+    if (selectedScenarioOptionId) {
+      return scenarioPaths.find((path) => path.dispatchOptionId === selectedScenarioOptionId)?.displayLabel
+        ?? findLinkedDispatchMapOption(selectedScenarioOptionId)?.routeLabel
+        ?? null
+    }
     if (!executionFrame) return null
     const routeRole = executionFrame.units[0]?.routeRole
     if (scenarioVariant === 'traffic' && executionFrame.definitionId === 'traffic-zhongshan-reroute') {
@@ -1716,7 +1728,7 @@ export const CityMap = memo(function CityMap({
       return routineHospitalTransfer.displayLabel
     }
     return null
-  }, [executionFrame, routineHospitalTransfer, scenarioVariant])
+  }, [executionFrame, routineHospitalTransfer, scenarioPaths, scenarioVariant, selectedScenarioOptionId])
   const activeScenarioPulsePath = useMemo(
     () => activeScenarioRouteLabel
       ? scenarioPaths.find((path) => path.layer === 'routes' && path.displayLabel === activeScenarioRouteLabel) ?? null
@@ -1813,7 +1825,7 @@ export const CityMap = memo(function CityMap({
     return scenarioPaths.filter((path) => path !== activeScenarioPulsePath)
   }, [activeScenarioPulsePath, pulseEnabled, scenarioPaths, taskRoutesVisible])
   const staticScenarioRouteArrows = useMemo<ScenarioRouteArrowDatum[]>(() => {
-    if (scenarioVariant !== 'traffic' && scenarioVariant !== 'medical' && scenarioVariant !== 'routine') return []
+    if (!['traffic', 'medical', 'routine', 'police_current', 'major'].includes(scenarioVariant ?? '')) return []
     return staticScenarioPaths
       .filter((path) => path.layer === 'routes' && path.path.length >= 2)
       .flatMap((path, pathIndex) => [0.38, 0.66].map((progress, arrowIndex) => {
@@ -2060,6 +2072,7 @@ export const CityMap = memo(function CityMap({
       const kind = point.poi ?? POI_KIND_BY_SCENARIO_KIND[point.kind]
       if (!kind) return []
       const facility = getDispatchFacility(point.dispatchFacilityId)
+      const linkedOption = findLinkedDispatchMapOption(point.dispatchOptionId)
       const candidateFacilityId = facility && isDispatchSelectableFacilityId(facility.id)
         ? facility.id
         : null
@@ -2074,20 +2087,31 @@ export const CityMap = memo(function CityMap({
         position: point.position,
         kind,
         label: point.label,
-        meta: facility ? `${facility.receivingState} · ${dispatchFacilityEtaLabel(facility)}` : undefined,
+        meta: facility
+          ? `${facility.receivingState} · ${dispatchFacilityEtaLabel(facility)}`
+          : linkedOption
+            ? `${linkedOption.resourceState} · 约 ${linkedOption.etaMinutes.toFixed(1)} 分钟（演示估算）`
+            : undefined,
         confidence: facility?.id === 'facility-medical-reference'
           ? 'unverified'
+          : linkedOption
+            ? 'unverified'
           : POI_CONFIDENCE_BY_SCENARIO_KIND[point.kind] ?? 'confirmed',
         alarm: point.kind === 'event',
-        role: facility ? 'facility' : undefined,
-        planningState: facility ? dispatchFacilityPlanningState(facility) : undefined,
-        selected: facility ? commandMapInteraction.medical?.selectedFacilityId === facility.id : false,
+        role: facility || linkedOption ? 'facility' : undefined,
+        planningState: facility ? dispatchFacilityPlanningState(facility) : linkedOption ? 'candidate' : undefined,
+        selected: facility
+          ? commandMapInteraction.medical?.selectedFacilityId === facility.id
+          : linkedOption?.optionId === selectedScenarioOptionId,
         onSelect: facility
           ? medicalSelect
-          : onScenarioPointSelect ? () => onScenarioPointSelect(point) : undefined,
+          : onScenarioPointSelect
+            && (!['police_current', 'major'].includes(scenarioVariant ?? '') || Boolean(point.dispatchOptionId))
+            ? () => onScenarioPointSelect(point)
+            : undefined,
       }]
     }),
-    [commandMapInteraction.medical, commandMapInteraction.traffic, onScenarioPointSelect, scenarioPoints],
+    [commandMapInteraction.medical, commandMapInteraction.traffic, onScenarioPointSelect, scenarioPoints, scenarioVariant, selectedScenarioOptionId],
   )
 
   // 荔湾主链路（非场景态）的 POI。这里的消防站与医院来自公开 OSM POI，标为已确认；
@@ -3021,6 +3045,7 @@ export const CityMap = memo(function CityMap({
       data-medical-drag-enabled={commandMapInteraction.medical?.enabled ? 'true' : 'false'}
       data-medical-drag-target-count={commandMedicalTargetRoutes.length}
       data-active-scenario-route={activeScenarioRouteLabel ?? ''}
+      data-selected-scenario-option={selectedScenarioOptionId}
       data-scenario-route-errors={scenarioRouting.errors.length}
       data-scenario-route-pending={scenarioRouting.pending ? 'true' : 'false'}
       data-scenario-route-endpoints={JSON.stringify(scenarioRouting.paths.map((path) => path.endpointLabels))}

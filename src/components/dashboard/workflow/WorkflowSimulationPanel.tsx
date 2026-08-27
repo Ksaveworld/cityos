@@ -137,12 +137,12 @@ export function WorkflowSimulationPanel({
     return <><TaskPanel fixture={fixture} session={session} selectedPlan={selectedPlan} onChange={onChange} onStepChange={onStepChange} onOpenOwnerReport={() => openReport('task')} onOpenCommandReport={() => openReport('command-task')} />{report}</>
   }
   if (normalizedStep === 7) {
-    if (fixture.id === 'police' && !forceStandardExecution) {
+    if (fixture.isHistoricalCase === true && !forceStandardExecution) {
       return <><StationCasePanel session={session} onChange={onChange} onStepChange={onStepChange} onPlaybackChange={onExecutionPlaybackChange} onOpenResources={onOpenResources} />{report}</>
     }
     return <><ExecutionPanel fixture={fixture} session={session} selectedPlan={selectedPlan} onChange={onChange} onStepChange={onStepChange} onOpenResources={onOpenResources} />{report}</>
   }
-  return <><ReviewPanel fixture={fixture} session={session} selectedPlan={selectedPlan} onStepChange={onStepChange} onOpenReport={() => fixture.id === 'police' && !forceStandardExecution ? openPlanReport(selectedPlan.id) : openReport('result')} />{report}</>
+  return <><ReviewPanel fixture={fixture} session={session} selectedPlan={selectedPlan} onStepChange={onStepChange} onOpenReport={() => fixture.isHistoricalCase === true && !forceStandardExecution ? openPlanReport(selectedPlan.id) : openReport('result')} />{report}</>
 }
 
 function InputPanel({
@@ -164,7 +164,7 @@ function InputPanel({
     onChange(validateInput(session, session.inputMode, template.id))
     onStepChange(3)
   }
-  const publicCase = fixture.id === 'police' || fixture.isHistoricalCase === true
+  const publicCase = fixture.isHistoricalCase === true
 
   return (
     <div className="space-y-3 p-3">
@@ -253,7 +253,7 @@ function BriefPanel({ fixture, session, onChange, onStepChange, onOpenReport }: 
     return <GateCard title="尚未形成 AI Brief" detail="请先从事件流或受限手工模板开始研判。" action="返回输入" onAction={() => onStepChange(0)} />
   }
   const location = session.inputValues.location?.trim() || fixture.address
-  const publicCase = fixture.id === 'police' || fixture.isHistoricalCase === true
+  const publicCase = fixture.isHistoricalCase === true
   const publicSource = fixture.isHistoricalCase ? '历史案例公开资料与已核验锚点' : '中国日报 2015-03-06 13:33 报道'
   const conclusionItems: BriefItem[] = [
     { label: '当前事件', value: fixture.title, source: publicCase ? publicSource : '已校验输入 + 场景模板', status: publicCase ? '公开历史案例已核验' : '本轮研判对象已确定', dataLabel: publicCase ? '公开事实' : '演示事件' },
@@ -645,7 +645,7 @@ function ExecutionPanel({
 }
 
 function ReviewPanel({ fixture, session, selectedPlan, onStepChange, onOpenReport }: { fixture: DomainFixture; session: WorkflowSession; selectedPlan: DomainFixture['plans'][number]; onStepChange: (step: number) => void; onOpenReport: () => void }) {
-  const stationPublicCase = fixture.id === 'police'
+  const stationPublicCase = fixture.isHistoricalCase === true
   const stationComparable = STATION_SIMULATION_RUNS.baseline.assumptionSetId === STATION_SIMULATION_RUNS.cityos.assumptionSetId
     && STATION_SIMULATION_RUNS.baseline.mapSnapshot === STATION_SIMULATION_RUNS.cityos.mapSnapshot
     && STATION_SIMULATION_RUNS.baseline.modelVersion === STATION_SIMULATION_RUNS.cityos.modelVersion

@@ -146,6 +146,7 @@ export const DOMAIN_FIXTURES: Record<DomainId, DomainFixture> = {
   },
   police: {
     id: 'police', scenarioId: 'haizhu-police', label: '110 警情', title: '广州火车站持刀伤人历史案例', address: '越秀区广州火车站站外广场',
+    isHistoricalCase: true,
     dataNote: '日期、约 8:20、地点、9 人受伤和粗粒度处置序列来自公开报道；警力、路线、分流、任务与时间线均为演示。',
     inputTemplates: [
       { id: 'station-public', title: '2015-03-06 公开事实锚点', detail: '中国日报当日 13:33 报道 · 公开事实' },
@@ -482,6 +483,7 @@ export const DOMAIN_FIXTURES: Record<DomainId, DomainFixture> = {
 export const CURRENT_POLICE_FIXTURE: DomainFixture = {
   ...DOMAIN_FIXTURES.police,
   scenarioId: 'yuexiu-police-current',
+  isHistoricalCase: false,
   title: '广州站广场协查任务签收异常',
   address: '越秀区广州火车站广场 · 演示事件',
   dataNote: '本页为当前演示 110 协查任务；地点参考公开 POI，警力、负责人、ETA、占用与签收状态均为演示。',
@@ -489,10 +491,45 @@ export const CURRENT_POLICE_FIXTURE: DomainFixture = {
     { id: 'station-current-timeout', title: '协查任务签收超时', detail: '任务回执模板 · 演示事件' },
     { id: 'station-current-busy', title: '属地警力已占用', detail: '资源占用模板 · 演示事件' },
   ],
+  inputFields: [
+    { id: 'eventType', label: '事件类型', value: '广州站广场协查任务签收超时（演示）' },
+    { id: 'location', label: '发生地点', value: '越秀区广州火车站广场 · 公开地点参考' },
+    { id: 'time', label: '异常时间', value: '14:26（演示时序）' },
+    { id: 'exception', label: '当前异常', value: '原外围疏导任务超过签收时限', summaryRank: 1 },
+    { id: 'pressure', label: '入口压力', value: '东侧入口压力上升（模拟待核实）', summaryRank: 2 },
+    { id: 'description', label: '现场补充', value: '候选单元在岗、通道和签收状态均需人工核实。', kind: 'textarea', summaryRank: 3 },
+  ],
   defaultOwner: '站区协同负责人 · 演示',
   plans: [
     { id: 'A', label: 'A', title: '切换响应单位', summary: '改由备用响应单元接单，并同步外围交通协同。', etaMinutes: 6.4, coverageRisk: '注意', actions: ['切换备用响应单元', '更新现场负责人', '外围交通协同'] },
     { id: 'B', label: 'B', title: '跨区增援响应', summary: '从相邻辖区抽调演示单元，保留站区外围岗位。', etaMinutes: 8.1, coverageRisk: '较低', actions: ['跨区增援联络', '站区外围岗位保留', '重新签收任务'] },
+  ],
+  brief: {
+    confirmed: [
+      { label: '输入渠道', value: '任务回执模板', source: '前端演示事件流', status: '模板已验证', dataLabel: simulated },
+      { label: '当前异常', value: '原外围疏导任务超过签收时限', source: '任务回执模板', status: '演示异常已记录', dataLabel: simulated },
+      { label: '地点参考', value: '越秀区广州火车站广场', source: '公开静态 POI / OSM 快照', status: '仅作位置参考', dataLabel: estimated },
+    ],
+    unknown: [
+      { label: '原疏导单元状态', value: '未接入实时在岗与签收状态', source: '待站区协调负责人核实', status: '未确认', dataLabel: pending },
+      { label: '候选单元可用性', value: '候选单元、编组与联络状态均为模拟', source: '待备用单元回传', status: '未确认', dataLabel: pending },
+      { label: '入口压力与通道', value: '未接入实时人流与临时管制信息', source: '待现场人员核实', status: '未确认', dataLabel: pending },
+    ],
+    context: [
+      { label: '候选位置', value: '公开静态警务 POI 只提供位置参考', source: 'OSM 快照', status: '非实时', dataLabel: estimated },
+      { label: '资源状态', value: '单元、人员、车辆和签收状态均为模拟', source: '前端演示资源台账', status: '模拟待核实', dataLabel: simulated },
+      { label: 'ETA 与路线', value: '按演示点位与本地 OSM 静态路网估算', source: '本地路网快照', status: '演示估算', dataLabel: estimated },
+    ],
+    gaps: [
+      { label: '实时编组', value: '候选单元当前在岗人员未接入', source: '待人工联络', status: '确认前必须核实', dataLabel: pending },
+      { label: '签收回传', value: '尚未取得备用疏导单元签收', source: '待站区外围协调负责人回传', status: '不得视为已接单', dataLabel: pending },
+      { label: '现场通道', value: '默认通道可达，实际人流与管制条件待确认', source: '待现场核验', status: '变化将影响 ETA', dataLabel: pending },
+    ],
+  },
+  taskAssignments: [
+    { department: '外围疏导（演示）', owner: '站区外围协调负责人 · 演示', task: '核验东侧入口压力并保持疏导通道', location: '广州站东侧入口 · 演示点位', window: '人工确认后启动 · 8 分钟内首轮回传（演示估算）', personnel: '疏导单元 1 组（模拟）', vehicles: '演示车辆 1 辆（模拟）', feedback: '回传到场、签收、入口压力与通道状态（模拟）', contact: '前端模拟任务包', eta: '约 6.4 分钟（演示估算）', etaSource: '演示点位 + 本地 OSM 静态路网' },
+    { department: '站区协同（演示）', owner: '站区协同负责人 · 演示', task: '联系备用响应单元并确认任务签收', location: '广州火车站广场 · 演示范围', window: '人工确认后启动 · 6 分钟内反馈（演示时限）', personnel: '联络单元 1 组（模拟）', vehicles: '步巡（模拟）', feedback: '回传联系人、签收结果与异常（模拟）', contact: '前端模拟任务包', eta: '约 6 分钟（演示时限）', etaSource: '演示流程时限' },
+    { department: '交通协同（演示）', owner: '站区交通协同负责人 · 演示', task: '核实外围通行与临时管制条件', location: '广州站外围道路 · 演示范围', window: '人工确认后启动 · 10 分钟内复核（演示时限）', personnel: '交通协同单元 1 组（模拟）', vehicles: '巡查车 1 辆（模拟）', feedback: '回传路口、通道和临时管制状态（模拟）', contact: '前端模拟任务包', eta: '约 8.1 分钟（演示估算）', etaSource: '演示点位 + 本地 OSM 静态路网' },
   ],
   executionSteps: ['演示任务包生成', '备用联系人演示签收', '外围岗位状态演示回填', '受控重试或完成'],
 }

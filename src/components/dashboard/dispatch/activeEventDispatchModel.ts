@@ -4,7 +4,8 @@ import {
   dispatchCandidateReceivingStateSummary,
   rankDispatchFacilitiesForContact,
   resolveDispatchFacilityByOptionId,
-} from './dispatchData'
+} from './dispatchData.ts'
+import { getLinkedDispatchMapConfig } from './linkedDispatchMapConfig.ts'
 
 export interface ActiveDispatchEvent {
   id: string
@@ -44,6 +45,17 @@ export function resolveDispatchOptionAnalysis(
   index: number,
 ): DispatchOptionAnalysis {
   if (event.kind === 'daily') {
+    const linkedOption = getLinkedDispatchMapConfig(event.id)?.options.find(
+      (candidate) => candidate.optionId === option.optionId,
+    )
+    if (linkedOption) {
+      return {
+        benefit: option.note,
+        tradeoff: linkedOption.verificationNote,
+        recommended: index === 0,
+      }
+    }
+
     const facility = resolveDispatchFacilityByOptionId(option.optionId)
     if (facility?.selectable) {
       const ranked = rankDispatchFacilitiesForContact()
@@ -106,6 +118,24 @@ function hospitalResolutionOptions(
   })
 }
 
+function linkedMapResolutionOptions(
+  event: ActiveDispatchEvent,
+  assignment: TaskAssignment,
+) {
+  const config = getLinkedDispatchMapConfig(event.id)
+  if (!config) return null
+  return config.options.map((option) => resolutionOption(
+    event.session,
+    assignment,
+    option.optionId,
+    option.optionLabel,
+    option.location,
+    option.owner,
+    option.vehicles,
+    option.taskNote,
+  ))
+}
+
 export function resolveDispatchException(event: ActiveDispatchEvent, assignments: TaskAssignment[]): DispatchException | null {
   if (event.session.deliveryStatus !== 'completed' || assignments.length === 0) return null
   // 历史链路每个案例只有一项预置资源异常。人工调整已经写入任务包后，
@@ -146,6 +176,7 @@ export function resolveDispatchException(event: ActiveDispatchEvent, assignments
   if (event.fixture.id === 'police') {
     const assignment = findAssignment(assignments, ['外围', '站区'])
     if (!assignment) return null
+    const linkedOptions = linkedMapResolutionOptions(event, assignment)
     return {
       department: assignment.department,
       task: assignment.task,
@@ -153,7 +184,7 @@ export function resolveDispatchException(event: ActiveDispatchEvent, assignments
       detail: '外围入口压力发生变化，原疏导单元没有按时签收。',
       signals: ['东侧入口人流压力上升', '原外围任务签收超时', '需要切换备用疏导单元'],
       action: '在本页选择备用疏导单元，确认后返回任务下发。',
-      options: [
+      options: linkedOptions ?? [
         resolutionOption(event.session, assignment, 'police-west-square', '站区西广场疏导组', '站外广场西侧', '站区外围协调负责人', '疏导单元 1 组', '备用疏导单元已接替；回传入口压力与通道状态。'),
         resolutionOption(event.session, assignment, 'police-huanshi-west', '环市西路外围协同组', '环市西路站区入口', '站区外围协调负责人', '疏导单元 1 组', '备用疏导单元已接替；回传入口压力与通道状态。'),
       ],
@@ -211,6 +242,7 @@ export function resolveDispatchException(event: ActiveDispatchEvent, assignments
   if (event.fixture.id !== 'major') return null
   const assignment = findAssignment(assignments, ['重大布防', '属地', '保障'])
   if (!assignment) return null
+  const linkedOptions = linkedMapResolutionOptions(event, assignment)
   return {
     department: assignment.department,
     task: assignment.task,
@@ -218,7 +250,7 @@ export function resolveDispatchException(event: ActiveDispatchEvent, assignments
     detail: '入口客流发生偏移，重点分区出现一个岗位缺口。',
     signals: ['重点入口覆盖下降', '原分区机动力量不足', '需要补充备用保障岗位'],
     action: '在本页选择补位力量，确认后返回任务下发。',
-    options: [
+    options: linkedOptions ?? [
       resolutionOption(event.session, assignment, 'major-tianhe-support', '天河外围保障组', '体育中心重点入口', '重点分区负责人', '保障岗位 2 组', '备用岗位已补位；回传入口覆盖与客流变化。'),
       resolutionOption(event.session, assignment, 'major-haizhu-mobile', '海珠机动保障组', '体育中心南侧入口', '现场总协调', '机动岗位 2 组', '机动岗位已补位；回传入口覆盖与客流变化。'),
     ],

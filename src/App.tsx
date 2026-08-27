@@ -24,6 +24,8 @@ import { ResourceDispatchWorkspace } from '@/components/dashboard/dispatch/Resou
 import { CommandWorkbench } from '@/components/dashboard/dispatch/CommandWorkbench'
 import type { CommandScenarioId } from '@/components/dashboard/dispatch/commandWorkbenchModel'
 import { LegacyDispatchWorkbench } from '@/components/dashboard/dispatch/LegacyDispatchWorkbench'
+import { LinkedDispatchWorkbench } from '@/components/dashboard/dispatch/LinkedDispatchWorkbench'
+import { getLinkedDispatchMapConfig } from '@/components/dashboard/dispatch/linkedDispatchMapConfig'
 import {
   ActiveEventDispatchContext,
   type ActiveDispatchEvent,
@@ -1246,7 +1248,15 @@ function LegacyApp() {
   const legacyMapDispatchEvent = activeDispatchEvent?.kind === 'daily' && activeDispatchEvent.id === 'ev-fire-finance'
     ? activeDispatchEvent
     : null
-  const legacyDispatchEvent = activeDispatchEvent && !commandWorkbenchEvent && !legacyMapDispatchEvent ? activeDispatchEvent : null
+  const linkedDispatchMapConfig = activeDispatchEvent?.kind === 'daily'
+    ? getLinkedDispatchMapConfig(activeDispatchEvent.id)
+    : null
+  const linkedMapDispatchEvent = activeDispatchEvent?.kind === 'daily' && linkedDispatchMapConfig
+    ? activeDispatchEvent
+    : null
+  const legacyDispatchEvent = activeDispatchEvent && !commandWorkbenchEvent && !legacyMapDispatchEvent && !linkedMapDispatchEvent
+    ? activeDispatchEvent
+    : null
   const legacySelectedFacilityId = resolveRoutineHospitalFacilityId(dispatchResolutionOptionId) ?? 'facility-medical-reference'
   const legacyHospitalTransfers = LEGACY_ROUTINE_HOSPITAL_TRANSFERS
   const legacyHospitalTransfer = legacyHospitalTransfers.find((transfer) => transfer.id === legacySelectedFacilityId) ?? null
@@ -1292,6 +1302,14 @@ function LegacyApp() {
     ? DISPATCH_FACILITIES.find((facility) => facility.id === confirmedReceivingFacilityId)
     : null
   const routineHospitalTransfer = createRoutineHospitalTransfer(confirmedReceivingFacility)
+  const confirmedLinkedDispatchConfig = !activeHistoricalCaseId && selectedTodayEventId
+    ? getLinkedDispatchMapConfig(selectedTodayEventId)
+    : null
+  const confirmedLinkedDispatchOptionId = confirmedLinkedDispatchConfig?.options.some(
+    (option) => option.optionId === activeWorkflowSession.inputValues.dispatchOverrideOptionId,
+  )
+    ? activeWorkflowSession.inputValues.dispatchOverrideOptionId
+    : null
   // 总览列表态是城市尺度的告警视图，不叠具体场景的点位与楼层剖面：
   // 城市告警点和某一栋楼的演练点位混在一张图上，两个尺度打架，谁也读不清。
   // 点进具体事件后 rightView 变 detail，场景图层自然回来。
@@ -1302,7 +1320,12 @@ function LegacyApp() {
     ? null
     : routineSimulation
     ? 'routine'
-    : activeScenarioId === 'haizhu-police' || activeScenarioId === 'yuexiu-police-current'
+    : activeScenarioId === 'yuexiu-police-current'
+      || (activeScenarioId === 'haizhu-police'
+        && selectedTodayEventId === 'ev-police-station-delay'
+        && !activeHistoricalCaseId)
+      ? 'police_current'
+      : activeScenarioId === 'haizhu-police'
       ? 'police'
       : activeScenarioId === 'yuexiu-medical'
         ? 'medical'
@@ -1464,6 +1487,74 @@ function LegacyApp() {
                 />
               )}
             />
+          ) : linkedMapDispatchEvent && linkedDispatchMapConfig ? (
+            <LinkedDispatchWorkbench
+              event={linkedMapDispatchEvent}
+              selectedOptionId={dispatchResolutionOptionId}
+              advisorRequestId={dispatchPromptRequest?.id}
+              onSelectOption={setDispatchResolutionOptionId}
+              renderMap={({ selectedOptionId, onScenarioPointSelect }) => (
+                <CityMap
+                  site={scenario.site}
+                  roads={routing.roads}
+                  plans={plans}
+                  routeWayIds={routeWayIds}
+                  medicalRoute={null}
+                  activePlanId={mapActivePlanId}
+                  animate
+                  taskRoutesVisible
+                  routePulseAllowed
+                  pulseActivePlanOnly={false}
+                  executionFrame={null}
+                  showStrategyMarkers={false}
+                  focusActiveRoute={false}
+                  scenarioFocusRevision={scenarioFocusRevision}
+                  closedWays={[]}
+                  routeStale={false}
+                  onCloseWay={() => undefined}
+                  onRemoveClosedWay={() => undefined}
+                  layers={commandMapLayers}
+                  resourceReferenceVisible={false}
+                  onResourceReferenceVisibleChange={() => undefined}
+                  showResourceReferenceControl={false}
+                  showSimulationProvenance={false}
+                  scenarioVariant={linkedDispatchMapConfig.mapVariant}
+                  routineHospitalTransfer={null}
+                  selectedScenarioOptionId={selectedOptionId}
+                  onScenarioPointSelect={(point) => {
+                    if (point.dispatchOptionId) onScenarioPointSelect(point.dispatchOptionId)
+                  }}
+                  showRoadNetworkContext
+                />
+              )}
+              contextPanel={(
+                <ActiveEventDispatchContext
+                  event={linkedMapDispatchEvent}
+                  onAsk={(text) => setDispatchPromptRequest({ id: crypto.randomUUID(), text })}
+                  onApplyResolution={applyDispatchResolution}
+                  selectedOptionId={dispatchResolutionOptionId}
+                  onSelectOption={setDispatchResolutionOptionId}
+                />
+              )}
+              advisorPanel={(
+                <ResourceDispatchWorkspace
+                  selectedCase={selectedDispatchCase}
+                  selectedAssignment={selectedDispatchAssignment}
+                  selectedOperation={selectedDispatchOperation}
+                  selectedSession={selectedDispatchSession}
+                  assignments={dispatchAssignments}
+                  operations={dispatchOperations}
+                  sessions={workflowSessions}
+                  entryNotice={dispatchEntryNotice}
+                  workflowEvent={linkedMapDispatchEvent}
+                  selectedResolutionOptionId={dispatchResolutionOptionId}
+                  promptRequest={dispatchPromptRequest}
+                  onOpen={openDispatchEvent}
+                  onSelectResolution={setDispatchResolutionOptionId}
+                  onApplyResolution={applyDispatchResolution}
+                />
+              )}
+            />
           ) : (
             <ResourceDispatchWorkspace
                 selectedCase={selectedDispatchCase}
@@ -1549,6 +1640,7 @@ function LegacyApp() {
               onStaticResourceSelect={clearDispatchSelection}
               scenarioVariant={scenarioMapVariant}
               routineHospitalTransfer={routineHospitalTransfer}
+              selectedScenarioOptionId={confirmedLinkedDispatchOptionId ?? undefined}
             />
             {scenarioMapVariant && (
               <ScenarioMap

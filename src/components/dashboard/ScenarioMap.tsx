@@ -6,9 +6,10 @@ import type { PoiKind } from './map/poiCatalog'
 import { OriginMark } from './Provenance'
 import { DISPATCH_FACILITIES, type DispatchFacilityId } from './dispatch/dispatchData'
 import { getPanfuHospitalPath, PANFU_MEDICAL_INCIDENT } from './dispatch/hospitalStrategyRoutes'
+import { LINKED_DISPATCH_MAP_CONFIGS } from './dispatch/linkedDispatchMapConfig'
 import { TRAFFIC_STRATEGY_ROUTES } from './dispatch/trafficStrategyRoutes'
 
-export type ScenarioMapVariant = 'routine' | 'police' | 'medical' | 'traffic' | 'urban_order' | 'major'
+export type ScenarioMapVariant = 'routine' | 'police' | 'police_current' | 'medical' | 'traffic' | 'urban_order' | 'major'
 
 export type ScenarioPointKind = 'event' | 'resource' | 'source' | 'camera' | 'entry'
 export type ScenarioPathLayer = 'traffic' | 'routes'
@@ -29,6 +30,8 @@ export interface ScenarioMapPoint {
   poi?: PoiKind
   /** 调度医院点位使用稳定 ID 绑定路线、ETA 与人工选择，避免靠文案反查。 */
   dispatchFacilityId?: DispatchFacilityId
+  /** 110 / 重大布防候选点与右栏 resolution option 共用的稳定 ID。 */
+  dispatchOptionId?: string
   /** 仅作为路网求路经由点，不在地图上绘制 POI。 */
   hidden?: boolean
 }
@@ -46,6 +49,8 @@ export interface ScenarioPointRouteRequest {
   displayLabel?: string
   /** 医疗转运路线与医院的一一对应键。 */
   dispatchFacilityId?: DispatchFacilityId
+  /** 110 / 重大布防候选方案与地图路线的一一对应键。 */
+  dispatchOptionId?: string
   /** 本地 OSM 快照预生成几何；存在时直接使用，不在页面运行期重新求路。 */
   presetPath?: Array<[number, number]>
   color: [number, number, number, number]
@@ -98,6 +103,8 @@ const GREEN: [number, number, number] = [48, 164, 108]
 const AMBER: [number, number, number] = [199, 120, 22]
 const VIOLET: [number, number, number] = [91, 91, 214]
 const CITY_ORDER: [number, number, number] = [194, 106, 46]
+const CURRENT_POLICE_MAP = LINKED_DISPATCH_MAP_CONFIGS['ev-police-station-delay']
+const MAJOR_MAP = LINKED_DISPATCH_MAP_CONFIGS['ev-major-tianhe']
 
 /**
  * 跨部门场景的车辆路线按力量类型分配：
@@ -168,6 +175,47 @@ export const SCENARIO_MAP_CONFIGS: Record<ScenarioMapVariant, ScenarioMapConfig>
         layer: 'traffic',
         state: 'clear',
         width: 2,
+      },
+    ],
+  },
+  police_current: {
+    title: CURRENT_POLICE_MAP.mapTitle,
+    area: CURRENT_POLICE_MAP.mapArea,
+    summary: CURRENT_POLICE_MAP.mapSummary,
+    center: CURRENT_POLICE_MAP.mapCenter,
+    zoom: CURRENT_POLICE_MAP.mapZoom,
+    areas: [
+      { position: CURRENT_POLICE_MAP.incidentPosition, radius: 720, color: BLUE, layer: 'base' },
+    ],
+    points: [
+      { position: CURRENT_POLICE_MAP.incidentPosition, label: CURRENT_POLICE_MAP.incidentLabel, kind: 'event', color: RED, poi: 'event', labelOffset: [14, -22] },
+      { position: [113.2594, 23.1494], label: '原外围疏导单元（模拟 · 签收超时）', kind: 'resource', color: RED, poi: 'police', labelOffset: [12, -14] },
+      ...CURRENT_POLICE_MAP.options.map((option, index): ScenarioMapPoint => ({
+        position: option.position,
+        label: option.pointLabel,
+        kind: 'resource',
+        color: [option.color[0], option.color[1], option.color[2]],
+        poi: 'police',
+        dispatchOptionId: option.optionId,
+        labelOffset: index === 0 ? [-12, -12] : [12, 14],
+      })),
+    ],
+    routes: [
+      ...CURRENT_POLICE_MAP.options.map((option): ScenarioPointRouteRequest => ({
+        fromLabel: option.pointLabel,
+        toLabel: option.targetLabel,
+        displayLabel: option.routeLabel,
+        dispatchOptionId: option.optionId,
+        color: option.color,
+        layer: 'routes',
+        width: 4.5,
+      })),
+      {
+        eventLabel: CURRENT_POLICE_MAP.incidentLabel,
+        color: [229, 72, 77, 205],
+        layer: 'traffic',
+        state: 'attention',
+        width: 2.2,
       },
     ],
   },
@@ -301,43 +349,50 @@ export const SCENARIO_MAP_CONFIGS: Record<ScenarioMapVariant, ScenarioMapConfig>
     ],
   },
   major: {
-    title: '重大布防态势',
-    area: '天河体育中心周边',
-    summary: '场馆分区与保障点位示意',
-    center: [113.3195, 23.1404],
-    zoom: 15.0,
+    title: MAJOR_MAP.mapTitle,
+    area: MAJOR_MAP.mapArea,
+    summary: MAJOR_MAP.mapSummary,
+    center: MAJOR_MAP.mapCenter,
+    zoom: MAJOR_MAP.mapZoom,
     areas: [
       { position: [113.3195, 23.1404], radius: 590, color: VIOLET, layer: 'base' },
       { position: [113.3224, 23.1424], radius: 480, color: BLUE, layer: 'weather' },
     ],
-    // 场馆与入口近似坐标由本仓库 OSM 街道中心线四至推导；真实场馆边界与入口位置待人工核实。
+    // 场馆与入口使用公开底图位置参考；候选单元、精确集结点、状态与 ETA 均为演示。
     points: [
-      { position: [113.3195, 23.1404], label: '活动场馆', kind: 'event', color: RED, poi: 'event', labelOffset: [14, -18] },
-      { position: [113.3195, 23.1433], label: '北入口', kind: 'entry', color: VIOLET, poi: 'entry', labelOffset: [12, -12] },
-      { position: [113.3227, 23.1404], label: '东入口', kind: 'entry', color: VIOLET, poi: 'entry', labelOffset: [12, -12] },
-      { position: [113.3195, 23.1373], label: '南入口', kind: 'entry', color: VIOLET, poi: 'entry', labelOffset: [12, 12] },
-      { position: [113.3163, 23.1412], label: '安保集结', kind: 'resource', color: BLUE, poi: 'assembly', labelOffset: [-12, -12] },
-      { position: [113.3227, 23.1393], label: '医疗保障', kind: 'resource', color: GREEN, poi: 'medical', labelOffset: [12, 12] },
+      { position: MAJOR_MAP.incidentPosition, label: MAJOR_MAP.incidentLabel, kind: 'event', color: RED, poi: 'event', labelOffset: [14, -18] },
+      ...MAJOR_MAP.targets.map((target, index): ScenarioMapPoint => ({
+        position: target.position,
+        label: target.label,
+        kind: 'entry',
+        color: VIOLET,
+        poi: 'entry',
+        labelOffset: index === 0 ? [12, -12] : [12, 12],
+      })),
+      ...MAJOR_MAP.options.map((option, index): ScenarioMapPoint => ({
+        position: option.position,
+        label: option.pointLabel,
+        kind: 'resource',
+        color: [option.color[0], option.color[1], option.color[2]],
+        poi: 'assembly',
+        dispatchOptionId: option.optionId,
+        labelOffset: index === 0 ? [-12, -12] : [12, 12],
+      })),
       { position: [113.3174, 23.1377], label: '西侧上游点位', kind: 'camera', color: VIOLET, labelOffset: [-12, 12] },
       { position: [113.3217, 23.143], label: '东侧上游点位', kind: 'camera', color: VIOLET, labelOffset: [12, -14] },
     ],
     routes: [
-      {
-        fromLabel: '安保集结',
-        toLabel: '活动场馆',
-        color: [59, 130, 246, 200],
+      ...MAJOR_MAP.options.map((option): ScenarioPointRouteRequest => ({
+        fromLabel: option.pointLabel,
+        toLabel: option.targetLabel,
+        displayLabel: option.routeLabel,
+        dispatchOptionId: option.optionId,
+        color: option.color,
         layer: 'routes',
-        width: 4,
-      },
+        width: 4.5,
+      })),
       {
-        fromLabel: '医疗保障',
-        toLabel: '活动场馆',
-        color: [14, 154, 167, 200],
-        layer: 'routes',
-        width: 4,
-      },
-      {
-        eventLabel: '活动场馆',
+        eventLabel: MAJOR_MAP.incidentLabel,
         color: [199, 120, 22, 175],
         layer: 'traffic',
         state: 'attention',
