@@ -20,6 +20,7 @@ import {
   FileClock,
   Image,
   LockKeyhole,
+  LoaderCircle,
   MapPin,
   MessageSquareText,
   Mic2,
@@ -74,6 +75,7 @@ interface AdvisorMessage {
 
 const PHASE_META: Record<CommandPhase, { label: string; tone: string }> = {
   blocked: { label: '执行异常', tone: 'danger' },
+  recalculating: { label: '方案重算中', tone: 'blue' },
   preview: { label: '调整预览', tone: 'violet' },
   'awaiting-approval': { label: '待人工批准', tone: 'amber' },
   approved: { label: '已批准 · 待发送', tone: 'green' },
@@ -97,6 +99,7 @@ export const CommandWorkbench = memo(function CommandWorkbench({ event, renderMa
   const [advisorOpen, setAdvisorOpen] = useState(false)
   const [advisorInput, setAdvisorInput] = useState('')
   const [reducedMotion, setReducedMotion] = useState(false)
+  const [trafficRecalculationProgress, setTrafficRecalculationProgress] = useState(0)
   const [advisorMessages, setAdvisorMessages] = useState<AdvisorMessage[]>([
     {
       id: 'assistant-boundary',
@@ -131,12 +134,11 @@ export const CommandWorkbench = memo(function CommandWorkbench({ event, renderMa
       : { label: '草案边界', tone: 'violet' }
   const commandExecutionFrame = useMemo<ExecutionFrame | null>(() => {
     if (scenario === 'traffic') {
-      const accepted = ['acknowledged', 'en-route', 'arrived'].includes(state.traffic.phase)
       return createCommandExecutionFrame({
         id: 'traffic-zhongshan-reroute',
         label: '清障车 02',
         kind: 'traffic',
-        routeRole: accepted ? 'medical' : 'secondary',
+        routeRole: state.traffic.activeRouteId === 'C' ? 'medical' : 'secondary',
         progress: state.traffic.carProgress,
         phase: state.traffic.phase,
       })
@@ -173,11 +175,32 @@ export const CommandWorkbench = memo(function CommandWorkbench({ event, renderMa
     return () => window.clearInterval(timer)
   }, [reducedMotion, scenario])
 
+  useEffect(() => {
+    if (state.traffic.phase !== 'recalculating') {
+      setTrafficRecalculationProgress(0)
+      return undefined
+    }
+
+    const durationMs = reducedMotion ? 180 : 1100
+    const startedAt = performance.now()
+    setTrafficRecalculationProgress(8)
+    const timer = window.setInterval(() => {
+      const elapsed = performance.now() - startedAt
+      const progress = Math.min(100, Math.round(8 + (elapsed / durationMs) * 92))
+      setTrafficRecalculationProgress(progress)
+      if (progress < 100) return
+      window.clearInterval(timer)
+      dispatch({ type: 'traffic/recalculation-complete' })
+    }, reducedMotion ? 60 : 90)
+
+    return () => window.clearInterval(timer)
+  }, [reducedMotion, state.traffic.phase])
+
   const liveMessage = useMemo(() => {
     if (scenario === 'traffic') {
       const traffic = state.traffic
-      if (traffic.phase === 'preview') return '已生成路线 C 预览，当前 v1 指令仍有效。'
-      if (traffic.phase === 'awaiting-approval') return '方案更新为 v2，v1 批准和任务包已失效。'
+      if (traffic.phase === 'recalculating') return '车辆已绑定路线 C，正在重算新方案。'
+      if (traffic.phase === 'awaiting-approval') return '方案 v2 已生成，地图预览已切换，等待负责人确认下发。'
       if (traffic.phase === 'acknowledged') return '新任务已模拟签收，等待指挥员开始执行。'
       if (traffic.phase === 'en-route') return '新任务开始执行，清障车沿路线 C 继续移动。'
       if (traffic.phase === 'arrived') return '清障车已模拟抵达作业点。'
@@ -220,7 +243,7 @@ export const CommandWorkbench = memo(function CommandWorkbench({ event, renderMa
           executionFrame: commandExecutionFrame,
           onScenarioPointSelect: (label) => {
             if (scenario === 'traffic' && label === '阻塞前换道路口（模拟）') {
-              dispatch({ type: 'traffic/preview-reroute' })
+              dispatch({ type: 'traffic/drop-reroute', routeProgress: 0.43 })
             }
             if (scenario === 'medical' && label === '广州市红十字会医院') {
               dispatch({ type: 'medical/select-red-cross' })
@@ -229,7 +252,7 @@ export const CommandWorkbench = memo(function CommandWorkbench({ event, renderMa
         })}
         traffic={state.traffic}
         medical={state.medical}
-        onTrafficPreview={() => dispatch({ type: 'traffic/preview-reroute' })}
+        onTrafficDrop={(routeProgress) => dispatch({ type: 'traffic/drop-reroute', routeProgress })}
         onMedicalSelect={() => dispatch({ type: 'medical/select-red-cross' })}
       />
 
@@ -250,7 +273,9 @@ export const CommandWorkbench = memo(function CommandWorkbench({ event, renderMa
         </header>
 
         <div className="command-plan-scroll">
-          {scenario === 'traffic' && <TrafficPlan state={state.traffic} />}
+          {scenario === 'traffic' && (
+            <TrafficPlan state={state.traffic} recalculationProgress={trafficRecalculationProgress} />
+          )}
           {scenario === 'medical' && <MedicalPlan state={state.medical} />}
           {scenario === 'city-order' && (
             <EvidencePlan
@@ -320,10 +345,7 @@ export const CommandWorkbench = memo(function CommandWorkbench({ event, renderMa
           reducedMotion={reducedMotion}
           onAction={() => {
             if (scenario === 'traffic') {
-              if (state.traffic.phase === 'blocked') dispatch({ type: 'traffic/preview-reroute' })
-              else if (state.traffic.phase === 'preview') dispatch({ type: 'traffic/submit-reroute' })
-              else if (state.traffic.phase === 'awaiting-approval') dispatch({ type: 'traffic/approve' })
-              else if (state.traffic.phase === 'approved') dispatch({ type: 'traffic/issue' })
+              if (state.traffic.phase === 'awaiting-approval') dispatch({ type: 'traffic/approve-and-issue' })
               else if (state.traffic.phase === 'sent-awaiting-ack') dispatch({ type: 'traffic/acknowledge' })
               else if (state.traffic.phase === 'acknowledged') dispatch({ type: 'traffic/start-execution' })
               else if (state.traffic.phase === 'en-route' && reducedMotion) dispatch({ type: 'traffic/tick', delta: 1 })
@@ -362,7 +384,12 @@ function createCommandExecutionFrame({
   phase: CommandPhase
 }): ExecutionFrame {
   const arrived = phase === 'arrived'
-  const waiting = phase === 'acknowledged'
+  const waiting = !['blocked', 'en-route', 'arrived'].includes(phase)
+  const incidentStage: ExecutionFrame['incidentStage'] = arrived
+    ? '现场核验'
+    : ['recalculating', 'awaiting-approval', 'approved', 'sent-awaiting-ack', 'acknowledged'].includes(phase)
+      ? '待出发'
+      : '协同在途'
   return {
     definitionId: id,
     playheadSec: progress * 100,
@@ -383,39 +410,69 @@ function createCommandExecutionFrame({
     tasks: [],
     visibleAlerts: [],
     onsiteNodes: [],
-    incidentStage: arrived ? '现场核验' : '协同在途',
+    incidentStage,
     blockingAlert: null,
   }
 }
 
-function TrafficPlan({ state }: { state: ReturnType<typeof createInitialCommandWorkbenchState>['traffic'] }) {
+function TrafficPlan({
+  state,
+  recalculationProgress,
+}: {
+  state: ReturnType<typeof createInitialCommandWorkbenchState>['traffic']
+  recalculationProgress: number
+}) {
   const routeCPreview = state.activeRouteId === 'C'
-  const replacementAccepted = ['acknowledged', 'en-route', 'arrived'].includes(state.phase)
+  const replacementIssued = ['sent-awaiting-ack', 'acknowledged', 'en-route', 'arrived'].includes(state.phase)
+
+  if (state.phase === 'recalculating') {
+    return (
+      <>
+        <PlanNotice
+          tone="blue"
+          icon={Route}
+          title="车辆已切换到路线 C 预览"
+          body="地图已按负责人的拖拽选择更新；系统正在重算风险、负责人和任务清单。"
+        />
+        <PlanRecalculationProgress progress={recalculationProgress} />
+        <PlanMetrics
+          items={[
+            ['地图状态', '路线 C · 调整预览'],
+            ['车辆状态', '停在拖放位置'],
+            ['任务状态', '尚未下发'],
+            ['人工权限', '新方案生成后确认下发'],
+          ]}
+        />
+      </>
+    )
+  }
+
   return (
     <>
       <PlanNotice
-        tone="danger"
-        icon={AlertTriangle}
-        title="原最短路线前方受阻"
-        body="清障车 02 仍在途；若新指令尚未签收，车辆将在安全决策点暂停。"
+        tone={routeCPreview ? 'blue' : 'danger'}
+        icon={routeCPreview ? Route : AlertTriangle}
+        title={routeCPreview ? '路线 C 调整方案已生成' : '原最短路线前方受阻'}
+        body={routeCPreview
+          ? '地图预览已经切换；只有负责人确认下发后，接收单位才会收到新任务包。'
+          : '请直接拖动地图上的清障车 02，将车辆放到绿色推荐路线 C。'}
       />
 
       <section className="command-plan-section">
-        <SectionHeading icon={Route} title="三路线比较" suffix="策略预设" />
-        <div className="command-route-list">
-          <RouteRow code="A" color="#3B82F6" title="常规路线" time="12 分钟" note="约 1.8 km · 可通行 · 路程最长" />
-          <RouteRow code="B" color="#E5484D" title="原最短路线" time="8 分钟" note="约 1.0 km · 前方已受阻" state="blocked" />
-          <RouteRow code="C" color="#30A46C" title="推荐改线" time="10 分钟" note="约 1.2 km · 比 B 稍长但短于 A" state={routeCPreview ? 'selected' : undefined} />
+        <SectionHeading icon={Route} title="路线调整" suffix="地图直接操作" />
+        <div className={`command-route-change ${routeCPreview ? 'is-preview' : ''}`}>
+          <div><span style={{ backgroundColor: '#E5484D' }}>B</span><strong>原执行路线</strong><small>前方受阻</small></div>
+          <b aria-hidden="true">→</b>
+          <div><span style={{ backgroundColor: '#30A46C' }}>C</span><strong>推荐改线</strong><small>{routeCPreview ? '已绑定地图预览' : '等待拖放车辆'}</small></div>
         </div>
-        <div className="command-time-equation"><span>8 分钟 <small>已受阻</small></span><b>&lt;</b><span>10 分钟 <small>推荐</small></span><b>&lt;</b><span>12 分钟 <small>常规</small></span></div>
       </section>
 
       <PlanMetrics
         items={[
-          ['当前执行', replacementAccepted ? '路线 C' : '路线 B · 至安全分叉点'],
-          ['调整预览', routeCPreview ? '路线 C · 10 分钟' : '尚未生成'],
-          ['剩余 ETA', state.phase === 'arrived' ? '已抵达' : replacementAccepted ? `${Math.max(0, Math.ceil((1 - state.carProgress) * 10))} 分钟 · 动态` : '至分叉点 · 动态'],
-          ['风险变化', replacementAccepted ? '受阻风险已解除' : routeCPreview ? '预览：绕开受阻路段' : '原路线不可继续'],
+          ['地图预览', routeCPreview ? '路线 C · 已切换' : '路线 B · 执行异常'],
+          ['方案状态', replacementIssued ? '新方案已下发' : routeCPreview ? '待负责人确认下发' : '等待地图调整'],
+          ['道路状态', routeCPreview ? '已绕开受阻路段' : '原路线不可继续'],
+          ['执行单位', state.phase === 'arrived' ? '清障车 02 · 已抵达' : '清障车 02 · 模拟'],
         ]}
       />
 
@@ -427,6 +484,38 @@ function TrafficPlan({ state }: { state: ReturnType<typeof createInitialCommandW
         previousTask={state.previousTask}
       />
     </>
+  )
+}
+
+function PlanRecalculationProgress({ progress }: { progress: number }) {
+  const stage = progress < 36
+    ? '捕捉车辆与目标道路'
+    : progress < 72
+      ? '重算路网与风险清单'
+      : '生成新方案与任务草案'
+  return (
+    <section className="command-plan-loading" data-testid="traffic-plan-loading">
+      <div className="command-plan-loading-heading">
+        <span className="command-plan-loading-spinner"><LoaderCircle size={16} /></span>
+        <div><strong>{stage}</strong><small>本地模拟重算</small></div>
+        <b>{progress}%</b>
+      </div>
+      <div
+        className="command-plan-loading-track"
+        role="progressbar"
+        aria-label="路线 C 方案生成进度"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={progress}
+      >
+        <span style={{ width: `${progress}%` }} />
+      </div>
+      <div className="command-plan-loading-steps" aria-hidden="true">
+        <span data-done={progress >= 12}>道路绑定</span>
+        <span data-done={progress >= 48}>风险同步</span>
+        <span data-done={progress >= 82}>方案成稿</span>
+      </div>
+    </section>
   )
 }
 
@@ -530,7 +619,7 @@ function GenericPlan({ scenario }: { scenario: CommandScenarioId }) {
         <SectionHeading icon={LockKeyhole} title="操作边界" suffix="人机协同" />
         <ul className="command-boundary-list">
           <li>Chatbot 只解释与生成草案</li>
-          <li>地图点选或拖拽不直接执行</li>
+          <li>地图拖拽只改变推演预览，不自动下发</li>
           <li>模拟任务包必须经人工批准</li>
         </ul>
       </section>
@@ -549,16 +638,6 @@ function PlanNotice({ tone, icon: Icon, title, body }: { tone: string; icon: typ
 
 function SectionHeading({ icon: Icon, title, suffix }: { icon: typeof Route; title: string; suffix: string }) {
   return <h3 className="command-section-heading"><Icon size={13} /><span>{title}</span><small>{suffix}</small></h3>
-}
-
-function RouteRow({ code, color, title, time, note, state }: { code: string; color: string; title: string; time: string; note: string; state?: 'blocked' | 'selected' }) {
-  return (
-    <article className={`command-route-row ${state ? `is-${state}` : ''}`}>
-      <span className="command-route-code" style={{ backgroundColor: color }}>{code}</span>
-      <div><strong>{title}</strong><small>{note}</small></div>
-      <b style={{ color }}>{time}</b>
-    </article>
-  )
 }
 
 function PlanMetrics({ items }: { items: Array<[string, string]> }) {
@@ -620,12 +699,18 @@ function CommandApprovalFooter({
   if (!['traffic', 'medical'].includes(scenario)) {
     return <footer className="command-approval-footer is-muted"><LockKeyhole size={14} /><span>本工作面尚未进入执行演示，不会产生任务。</span></footer>
   }
+  if (scenario === 'traffic' && phase === 'blocked') {
+    return <footer className="command-approval-footer is-muted"><Route size={14} /><span>请在地图上按住清障车 02，拖到绿色路线 C。</span></footer>
+  }
+  if (scenario === 'traffic' && phase === 'recalculating') {
+    return <footer className="command-approval-footer is-muted"><LoaderCircle size={14} /><span>地图已切换，正在生成新的方案与任务草案。</span></footer>
+  }
   const action = phase === 'blocked'
-    ? { label: scenario === 'traffic' ? '生成路线 C 预览' : '选择红十字会医院', icon: Route }
+    ? { label: '选择红十字会医院', icon: Route }
     : phase === 'preview'
       ? { label: '提交调整并生成新版本', icon: Play }
-      : phase === 'awaiting-approval'
-        ? { label: `人工批准 ${scenario === 'traffic' ? '改线' : '转运'} v2`, icon: LockKeyhole }
+    : phase === 'awaiting-approval'
+        ? { label: scenario === 'traffic' ? '负责人确认并下发改线 v2' : '人工批准 转运 v2', icon: LockKeyhole }
         : phase === 'approved'
           ? { label: '模拟发送任务包', icon: Send }
           : phase === 'sent-awaiting-ack'
@@ -639,7 +724,7 @@ function CommandApprovalFooter({
               : null
   return (
     <footer className="command-approval-footer">
-      <p><LockKeyhole size={12} />点选、拖拽和 Chatbot 都不会自动执行</p>
+      <p><LockKeyhole size={12} />地图拖拽只改变推演预览；方案下发需要负责人确认</p>
       {action ? <button type="button" onClick={onAction}><action.icon size={14} />{action.label}</button> : <div className="command-execution-state"><span className="command-live-dot" />单位正沿新路线缓慢移动</div>}
     </footer>
   )
@@ -647,7 +732,7 @@ function CommandApprovalFooter({
 
 function advisorResponse(scenario: CommandScenarioId, text: string) {
   if (scenario === 'traffic') {
-    if (text.includes('比较') || text.includes('路线')) return '路线 B 原预计 8 分钟但已受阻；路线 C 预计 10 分钟，比常规路线 A 的 12 分钟更短。我建议生成 C 的调整草案，交由指挥员批准。'
+    if (text.includes('比较') || text.includes('路线')) return '三条路线的时间已直接标在线路上方。路线 B 已受阻，路线 C 绕开阻塞且短于常规路线 A；拖动车辆只改变地图预览，新方案仍需负责人确认下发。'
     return '核心参数从路线 B 改为 C 后，旧批准与任务包不能自动继承，否则接收单位可能同时看到两条冲突指令。'
   }
   if (scenario === 'medical') return '建议保留同一辆在途救护车，只更换接收点、路线和联络负责人。红十字会医院状态仍需人工联络确认。'

@@ -2,6 +2,7 @@ export type CommandScenarioId = 'traffic' | 'medical' | 'city-order' | 'fire' | 
 
 export type CommandPhase =
   | 'blocked'
+  | 'recalculating'
   | 'preview'
   | 'awaiting-approval'
   | 'approved'
@@ -71,10 +72,9 @@ export interface CommandWorkbenchState {
 
 export type CommandWorkbenchAction =
   | { type: 'traffic/tick'; delta: number }
-  | { type: 'traffic/preview-reroute' }
-  | { type: 'traffic/submit-reroute' }
-  | { type: 'traffic/approve' }
-  | { type: 'traffic/issue' }
+  | { type: 'traffic/drop-reroute'; routeProgress: number }
+  | { type: 'traffic/recalculation-complete' }
+  | { type: 'traffic/approve-and-issue' }
   | { type: 'traffic/acknowledge' }
   | { type: 'traffic/start-execution' }
   | { type: 'traffic/reset' }
@@ -119,12 +119,9 @@ const INITIAL_MEDICAL_STATE: MedicalCommandState = {
   previousTask: null,
 }
 
-// 路线 B/C 从起点到阻塞前换道路口共线约 234.2 m。旧任务签收替换时按
-// 冻结的本地 OSM 路网长度（B 约 985.3 m / C 约 1229.8 m）换算归一化进度，
-// 避免车辆从 B 切到 C 时前后瞬移；未签收前最多行驶到安全分叉点。
+// 路线 B 从起点到阻塞前换道路口约 234.2 m；在负责人尚未拖放改线时，
+// 车辆最多移动到这处安全决策点。拖放后的位置直接来自地图对路线 C 的吸附进度。
 const TRAFFIC_SAFE_DECISION_PROGRESS_B = 0.2377266150
-const TRAFFIC_SAFE_DECISION_PROGRESS_C = 0.1904478302
-const TRAFFIC_ROUTE_B_TO_C_PROGRESS_RATIO = 0.8011211963
 const MEDICAL_SAFE_DECISION_PROGRESS_OLD = 0.1950485337
 const MEDICAL_SAFE_DECISION_PROGRESS_NEW = 0.2010776026
 const MEDICAL_OLD_TO_NEW_PROGRESS_RATIO = 1.0309106086
@@ -173,7 +170,7 @@ export function commandWorkbenchReducer(
   switch (action.type) {
     case 'traffic/tick': {
       const traffic = state.traffic
-      const canAdvance = !['acknowledged', 'arrived'].includes(traffic.phase)
+      const canAdvance = ['blocked', 'en-route'].includes(traffic.phase)
       if (!canAdvance) return state
       const limit = traffic.phase === 'en-route' ? 1 : TRAFFIC_SAFE_DECISION_PROGRESS_B
       const carProgress = Math.min(limit, traffic.carProgress + action.delta)
@@ -188,18 +185,19 @@ export function commandWorkbenchReducer(
         },
       }
     }
-    case 'traffic/preview-reroute':
-      if (!['blocked', 'preview'].includes(state.traffic.phase)) return state
+    case 'traffic/drop-reroute':
+      if (state.traffic.phase !== 'blocked' || state.traffic.activeRouteId !== 'B') return state
       return {
         ...state,
         traffic: {
           ...state.traffic,
-          phase: 'preview',
+          phase: 'recalculating',
           activeRouteId: 'C',
+          carProgress: Math.max(0.05, Math.min(0.95, action.routeProgress)),
         },
       }
-    case 'traffic/submit-reroute':
-      if (state.traffic.phase !== 'preview') return state
+    case 'traffic/recalculation-complete':
+      if (state.traffic.phase !== 'recalculating') return state
       return {
         ...state,
         traffic: {
@@ -214,25 +212,15 @@ export function commandWorkbenchReducer(
           },
         },
       }
-    case 'traffic/approve':
+    case 'traffic/approve-and-issue':
       if (state.traffic.phase !== 'awaiting-approval') return state
       return {
         ...state,
         traffic: {
           ...state.traffic,
-          phase: 'approved',
+          phase: 'sent-awaiting-ack',
           approvedVersion: state.traffic.planVersion,
           taskVersion: state.traffic.planVersion,
-          taskStatus: 'pending-send',
-        },
-      }
-    case 'traffic/issue':
-      if (state.traffic.phase !== 'approved') return state
-      return {
-        ...state,
-        traffic: {
-          ...state.traffic,
-          phase: 'sent-awaiting-ack',
           taskStatus: 'sent-awaiting-ack',
         },
       }
@@ -247,10 +235,6 @@ export function commandWorkbenchReducer(
           previousTask: state.traffic.previousTask
             ? { ...state.traffic.previousTask, status: 'replaced' }
             : null,
-          carProgress: Math.min(
-            TRAFFIC_SAFE_DECISION_PROGRESS_C,
-            state.traffic.carProgress * TRAFFIC_ROUTE_B_TO_C_PROGRESS_RATIO,
-          ),
         },
       }
     case 'traffic/start-execution':

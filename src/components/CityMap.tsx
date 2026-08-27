@@ -44,6 +44,12 @@ import { CURRENT_WEATHER } from '@/components/dashboard/weather/weatherCondition
 import { ROUTINE_HIGH_RISE } from '@/components/dashboard/fireModes'
 import type { MapLayerVisibility } from '@/components/dashboard/mapLayers'
 import type { RoutineHospitalTransfer } from '@/components/dashboard/dispatch/hospitalStrategyRoutes'
+import { useCommandMapInteraction } from '@/components/dashboard/dispatch/CommandMapInteractionContext'
+import {
+  CommandTrafficMapMarkers,
+  type CommandTrafficRouteAnnotation,
+  type CommandTrafficUnitMarkerDatum,
+} from '@/components/dashboard/dispatch/CommandTrafficMapMarkers'
 import type {
   ExecutionFrame,
   ExecutionIntersectionFrame,
@@ -485,6 +491,13 @@ interface ScenarioPathDatum {
   roadState?: ScenarioRoadState
 }
 
+interface ScenarioRouteArrowDatum {
+  id: string
+  position: [number, number]
+  angle: number
+  color: [number, number, number, number]
+}
+
 interface OrderedScenarioWay {
   wayId: string
   roadName: string
@@ -596,6 +609,7 @@ export const CityMap = memo(function CityMap({
   onScenarioPointSelect,
   showRoadNetworkContext = false,
 }: Props) {
+  const commandMapInteraction = useCommandMapInteraction()
   const container = useRef<HTMLDivElement>(null)
   const legend = useRef<HTMLDivElement>(null)
   const map = useRef<MapLibreMap | null>(null)
@@ -1653,6 +1667,31 @@ export const CityMap = memo(function CityMap({
       : null,
     [activeScenarioRouteLabel, scenarioPaths],
   )
+  const commandTrafficRoutes = useMemo<CommandTrafficRouteAnnotation[]>(() => {
+    if (scenarioVariant !== 'traffic') return []
+    const trafficRoutes = scenarioPaths.filter((path) => path.layer === 'routes' && path.path.length >= 2)
+    return trafficRoutes.flatMap((route) => {
+      const label = route.displayLabel ?? ''
+      const routeId = label.match(/路线 ([ABC])/)?.[1]
+      if (routeId !== 'A' && routeId !== 'B' && routeId !== 'C') return []
+      const time = label.match(/(\d+) 分钟/)?.[1]
+      if (!time) return []
+      const status = routeId === 'A' ? '常规' : routeId === 'B' ? '最短 · 受阻' : '推荐改线'
+      return [{
+        routeId,
+        title: label,
+        time: `${time} 分钟`,
+        status,
+        color: `rgb(${route.color[0]} ${route.color[1]} ${route.color[2]})`,
+        path: route.path,
+        labelPosition: separatedRouteLabelPosition(
+          route.path,
+          trafficRoutes.filter((candidate) => candidate !== route).map((candidate) => candidate.path),
+        ),
+        active: label === activeScenarioRouteLabel,
+      }]
+    })
+  }, [activeScenarioRouteLabel, scenarioPaths, scenarioVariant])
 
   /**
    * 全图路线的激光脉冲数据源，见 PulseRouteDatum 的说明。
@@ -1719,6 +1758,21 @@ export const CityMap = memo(function CityMap({
     if (!activeScenarioPulsePath) return scenarioPaths.filter((path) => path.layer !== 'routes')
     return scenarioPaths.filter((path) => path !== activeScenarioPulsePath)
   }, [activeScenarioPulsePath, pulseEnabled, scenarioPaths, taskRoutesVisible])
+  const staticScenarioRouteArrows = useMemo<ScenarioRouteArrowDatum[]>(() => {
+    if (scenarioVariant !== 'traffic') return []
+    return staticScenarioPaths
+      .filter((path) => path.layer === 'routes' && path.path.length >= 2)
+      .flatMap((path, pathIndex) => [0.38, 0.66].map((progress, arrowIndex) => {
+        const before = pointAlongPath(path.path, Math.max(0, progress - 0.018))
+        const after = pointAlongPath(path.path, Math.min(1, progress + 0.018))
+        return {
+          id: `static-route-arrow-${pathIndex}-${arrowIndex}`,
+          position: pointAlongPath(path.path, progress),
+          angle: routeArrowAngle(before, after),
+          color: [path.color[0], path.color[1], path.color[2], 205],
+        }
+      }))
+  }, [scenarioVariant, staticScenarioPaths])
   const executionRoutePaths = useMemo<Record<ExecutionRouteRole, Array<[number, number]>>>(() => {
     // 执行几何不能跟图层开关联动：隐藏车辆路线后，道路 cue 仍要能从原始求路结果取到位置。
     const scenarioRoutes = scenarioRouting.paths.filter((path) => path.layer === 'routes')
@@ -1752,6 +1806,22 @@ export const CityMap = memo(function CityMap({
       }]
     })
   }, [executionFrame, executionRoutePaths])
+  const commandTrafficUnit = useMemo<CommandTrafficUnitMarkerDatum | null>(() => {
+    if (scenarioVariant !== 'traffic' || !commandMapInteraction.traffic) return null
+    const unit = executionUnits.find((candidate) => candidate.kind === 'traffic')
+    return unit ? {
+      id: unit.id,
+      label: unit.label,
+      position: unit.position,
+      status: unit.status,
+    } : null
+  }, [commandMapInteraction.traffic, executionUnits, scenarioVariant])
+  const deckExecutionUnits = useMemo(
+    () => commandTrafficUnit
+      ? executionUnits.filter((unit) => unit.kind !== 'traffic')
+      : executionUnits,
+    [commandTrafficUnit, executionUnits],
+  )
   const executionIntersections = useMemo<ExecutionIntersectionDatum[]>(() => {
     if (!executionFrame) return []
     return executionFrame.intersections.flatMap((intersection) => {
@@ -1876,6 +1946,7 @@ export const CityMap = memo(function CityMap({
   // 没标的宁可不画，也不要退回成一个看不出是什么的通用圆点。
   const scenarioPoiMarkers = useMemo<PoiMarkerDatum[]>(
     () => scenarioPoints.flatMap((point, index) => {
+      if (commandMapInteraction.traffic && point.label === '清障车 02 当前位置（模拟）') return []
       const kind = point.poi ?? POI_KIND_BY_SCENARIO_KIND[point.kind]
       if (!kind) return []
       return [{
@@ -1888,7 +1959,7 @@ export const CityMap = memo(function CityMap({
         onSelect: onScenarioPointSelect ? () => onScenarioPointSelect(point) : undefined,
       }]
     }),
-    [onScenarioPointSelect, scenarioPoints],
+    [commandMapInteraction.traffic, onScenarioPointSelect, scenarioPoints],
   )
 
   // 荔湾主链路（非场景态）的 POI。这里的消防站与医院来自公开 OSM POI，标为已确认；
@@ -2155,6 +2226,23 @@ export const CityMap = memo(function CityMap({
             capRounded: true,
             pickable: false,
             extensions: [DASHED_PATH_STYLE],
+          }),
+        staticScenarioRouteArrows.length > 0 &&
+          new TextLayer<ScenarioRouteArrowDatum>({
+            id: 'scenario-static-route-arrows',
+            data: staticScenarioRouteArrows,
+            getPosition: (arrow) => arrow.position,
+            getText: () => '➤',
+            getAngle: (arrow) => arrow.angle,
+            getColor: (arrow) => arrow.color,
+            getSize: 11,
+            sizeUnits: 'pixels',
+            getTextAnchor: 'middle',
+            getAlignmentBaseline: 'center',
+            fontFamily: 'system-ui, "PingFang SC", "Microsoft YaHei", sans-serif',
+            fontWeight: 800,
+            characterSet: ['➤'],
+            pickable: false,
           }),
         // 场景点位不再用散点+文字标签画。8/20 评审要的「高德元素」就是这一层：
         // 医院、消防站、封路、红绿灯、摄像头要有形象化小标识，光靠彩色圆点分不出
@@ -2440,10 +2528,10 @@ export const CityMap = memo(function CityMap({
             characterSet: 'auto',
             pickable: false,
           }),
-        executionUnits.length > 0 &&
+        deckExecutionUnits.length > 0 &&
           new ScatterplotLayer<ExecutionUnitDatum>({
             id: 'execution-units-simulated',
-            data: executionUnits,
+            data: deckExecutionUnits,
             getPosition: (unit) => unit.position,
             getRadius: unit => unit.status === 'arrived' ? 13 : 11,
             radiusUnits: 'pixels',
@@ -2454,10 +2542,10 @@ export const CityMap = memo(function CityMap({
             filled: true,
             pickable: false,
           }),
-        executionUnits.length > 0 &&
+        deckExecutionUnits.length > 0 &&
           new TextLayer<ExecutionUnitDatum>({
             id: 'execution-unit-labels-simulated',
-            data: executionUnits,
+            data: deckExecutionUnits,
             getPosition: (unit) => unit.position,
             getText: (unit) => unit.kind === 'fire' ? '消' : unit.kind === 'police' ? '警' : unit.kind === 'traffic' ? '障' : '医',
             getColor: [255, 255, 255, 255],
@@ -2514,7 +2602,7 @@ export const CityMap = memo(function CityMap({
         }),
       ].filter(Boolean),
     })
-  }, [activePlan, activePlanSegments, routeStale, exclusiveSegments, sharedSegments, closedRoads, blockedRoadMarkers, trafficSegments, historyTrack, layers.routes, layers.traffic, medicalOrigins, roadNetworkContext, scenarioConfig, scenarioAreas, scenarioPaths, activeScenarioPulsePath, staticScenarioPaths, pulseRoutes, pulseEnabled, pulseActivePlanOnly, reducedMotion, cityOverviewMode, executionFrame, executionIntersections, executionOnsiteNodes, executionRoadCues, executionTrafficTrips, executionUnits, routePulseAllowed, taskRoutesVisible])
+  }, [activePlan, activePlanSegments, routeStale, exclusiveSegments, sharedSegments, closedRoads, blockedRoadMarkers, trafficSegments, historyTrack, layers.routes, layers.traffic, medicalOrigins, roadNetworkContext, scenarioConfig, scenarioAreas, scenarioPaths, activeScenarioPulsePath, staticScenarioPaths, staticScenarioRouteArrows, pulseRoutes, pulseEnabled, pulseActivePlanOnly, reducedMotion, cityOverviewMode, executionFrame, executionIntersections, executionOnsiteNodes, executionRoadCues, executionTrafficTrips, deckExecutionUnits, routePulseAllowed, taskRoutesVisible])
 
   useEffect(() => {
     drawRef.current = draw
@@ -2790,6 +2878,9 @@ export const CityMap = memo(function CityMap({
           points: path.path.length,
         })))}
       data-static-scenario-route-count={staticScenarioPaths.filter((path) => path.layer === 'routes').length}
+      data-static-route-arrow-count={staticScenarioRouteArrows.length}
+      data-command-route-label-count={commandTrafficRoutes.length}
+      data-traffic-drag-enabled={commandMapInteraction.traffic?.enabled ? 'true' : 'false'}
       data-active-scenario-route={activeScenarioRouteLabel ?? ''}
       data-scenario-route-errors={scenarioRouting.errors.length}
       data-scenario-route-pending={scenarioRouting.pending ? 'true' : 'false'}
@@ -2852,6 +2943,14 @@ export const CityMap = memo(function CityMap({
       {/* POI 徽标挂在 MapLibre 自己的 marker 层，随地图平移缩放，不需要我们逐帧投影。 */}
       <MapPoiMarkers map={ready ? map.current : null} points={poiMarkers} />
       <MapSignalCallouts map={ready ? map.current : null} callout={scenarioSignalCallout} />
+      {commandMapInteraction.traffic && (
+        <CommandTrafficMapMarkers
+          map={ready ? map.current : null}
+          routes={commandTrafficRoutes}
+          unit={commandTrafficUnit}
+          interaction={commandMapInteraction.traffic}
+        />
+      )}
 
       {/* 气象动效铺在底图与 deck 画布之上、HUD 浮层之下。所有场景通用，不只日常态。 */}
       <WeatherOverlay active={layers.weather} />
@@ -3393,6 +3492,40 @@ function pointAlongPath(path: Array<[number, number]>, progress: number): [numbe
   }
 
   return path[path.length - 1]
+}
+
+function separatedRouteLabelPosition(
+  path: Array<[number, number]>,
+  otherPaths: Array<Array<[number, number]>>,
+): [number, number] {
+  const candidates = [0.24, 0.34, 0.44, 0.54, 0.64, 0.74, 0.82]
+  let bestPosition = pointAlongPath(path, 0.5)
+  let bestScore = Number.NEGATIVE_INFINITY
+
+  for (const progress of candidates) {
+    const position = pointAlongPath(path, progress)
+    const separation = otherPaths.length === 0
+      ? 0
+      : Math.min(...otherPaths.map((otherPath) => Math.min(
+          ...Array.from({ length: 21 }, (_, index) => meters(position, pointAlongPath(otherPath, index / 20))),
+        )))
+    // 同等分离度时优先中段，避免标签贴着起终点和 POI 堆在一起。
+    const middleBias = 1 - Math.abs(progress - 0.54)
+    const score = separation + middleBias * 8
+    if (score > bestScore) {
+      bestScore = score
+      bestPosition = position
+    }
+  }
+
+  return bestPosition
+}
+
+function routeArrowAngle(from: [number, number], to: [number, number]) {
+  const latitudeScale = Math.cos(((from[1] + to[1]) * Math.PI) / 360) || 1
+  const dx = (to[0] - from[0]) * latitudeScale
+  const dy = to[1] - from[1]
+  return (Math.atan2(-dy, dx) * 180) / Math.PI
 }
 
 function pathBetweenProgress(

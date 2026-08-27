@@ -6,18 +6,20 @@ import {
   createInitialCommandWorkbenchState,
 } from './commandWorkbenchModel.ts'
 
-test('traffic preview is reversible and only submit invalidates the approved v1 task', () => {
+test('dragging the traffic unit switches the map preview before recalculation invalidates v1', () => {
   const initial = createInitialCommandWorkbenchState()
-  const preview = commandWorkbenchReducer(initial, { type: 'traffic/preview-reroute' })
+  const preview = commandWorkbenchReducer(initial, { type: 'traffic/drop-reroute', routeProgress: 0.43 })
 
-  assert.equal(preview.traffic.phase, 'preview')
+  assert.equal(preview.traffic.phase, 'recalculating')
+  assert.equal(preview.traffic.activeRouteId, 'C')
+  assert.equal(preview.traffic.carProgress, 0.43)
   assert.equal(preview.traffic.planVersion, 1)
   assert.equal(preview.traffic.approvedVersion, 1)
   assert.equal(preview.traffic.taskVersion, 1)
   assert.equal(preview.traffic.taskStatus, 'en-route')
   assert.equal(preview.traffic.previousTask, null)
 
-  const submitted = commandWorkbenchReducer(preview, { type: 'traffic/submit-reroute' })
+  const submitted = commandWorkbenchReducer(preview, { type: 'traffic/recalculation-complete' })
   assert.equal(submitted.traffic.phase, 'awaiting-approval')
   assert.equal(submitted.traffic.planVersion, 2)
   assert.equal(submitted.traffic.approvedVersion, null)
@@ -25,40 +27,35 @@ test('traffic preview is reversible and only submit invalidates the approved v1 
   assert.deepEqual(submitted.traffic.previousTask, { version: 1, status: 'invalidated' })
 })
 
-test('traffic replacement requires approval, send and acknowledgement before route C executes', () => {
+test('traffic route C preview is immediate but the replacement task still requires approval and delivery', () => {
   let state = createInitialCommandWorkbenchState()
   state = commandWorkbenchReducer(state, { type: 'traffic/tick', delta: 1 })
   assert.ok(
     Math.abs(state.traffic.carProgress - 0.2377266150) < 1e-10,
     'vehicle waits at the last shared B/C point before the blocked way',
   )
-  state = commandWorkbenchReducer(state, { type: 'traffic/preview-reroute' })
-  state = commandWorkbenchReducer(state, { type: 'traffic/submit-reroute' })
+  state = commandWorkbenchReducer(state, { type: 'traffic/drop-reroute', routeProgress: 0.43 })
+  assert.equal(state.traffic.activeRouteId, 'C')
+  assert.equal(state.traffic.carProgress, 0.43)
+  assert.equal(
+    commandWorkbenchReducer(state, { type: 'traffic/tick', delta: 0.1 }).traffic.carProgress,
+    0.43,
+    'map preview stays at the dropped position until the replacement task executes',
+  )
+  state = commandWorkbenchReducer(state, { type: 'traffic/recalculation-complete' })
 
-  const prematureSend = commandWorkbenchReducer(state, { type: 'traffic/issue' })
-  assert.equal(prematureSend, state)
-
-  state = commandWorkbenchReducer(state, { type: 'traffic/approve' })
-  assert.equal(state.traffic.phase, 'approved')
+  state = commandWorkbenchReducer(state, { type: 'traffic/approve-and-issue' })
+  assert.equal(state.traffic.phase, 'sent-awaiting-ack')
   assert.equal(state.traffic.approvedVersion, 2)
   assert.equal(state.traffic.taskVersion, 2)
-  assert.equal(state.traffic.taskStatus, 'pending-send')
-
-  state = commandWorkbenchReducer(state, { type: 'traffic/issue' })
-  assert.equal(state.traffic.phase, 'sent-awaiting-ack')
   assert.equal(state.traffic.taskStatus, 'sent-awaiting-ack')
 
-  const progressOnRouteB = state.traffic.carProgress
+  const previewProgressOnRouteC = state.traffic.carProgress
   state = commandWorkbenchReducer(state, { type: 'traffic/acknowledge' })
   assert.equal(state.traffic.phase, 'acknowledged')
   assert.equal(state.traffic.taskStatus, 'accepted')
   assert.deepEqual(state.traffic.previousTask, { version: 1, status: 'replaced' })
-  assert.ok(state.traffic.carProgress > 0)
-  assert.ok(state.traffic.carProgress < progressOnRouteB, 'normalized progress is remapped to the longer route C')
-  assert.ok(
-    Math.abs(state.traffic.carProgress - 0.1904478302) < 1e-10,
-    'route C resumes from the same physical B/C divergence point',
-  )
+  assert.equal(state.traffic.carProgress, previewProgressOnRouteC, 'acknowledgement does not move an already previewed unit')
 
   state = commandWorkbenchReducer(state, { type: 'traffic/start-execution' })
   assert.equal(state.traffic.phase, 'en-route')

@@ -1,4 +1,4 @@
-import { memo, type ReactNode } from 'react'
+import { memo, useMemo, type ReactNode } from 'react'
 import { MapPinned, Route } from 'lucide-react'
 
 import type {
@@ -6,13 +6,14 @@ import type {
   MedicalCommandState,
   TrafficCommandState,
 } from './commandWorkbenchModel'
+import { CommandMapInteractionProvider } from './CommandMapInteractionProvider'
 
 interface CommandTacticalMapProps {
   scenario: CommandScenarioId
   map: ReactNode
   traffic: TrafficCommandState
   medical: MedicalCommandState
-  onTrafficPreview: () => void
+  onTrafficDrop: (routeProgress: number) => void
   onMedicalSelect: () => void
 }
 
@@ -21,7 +22,7 @@ export const CommandTacticalMap = memo(function CommandTacticalMap({
   map,
   traffic,
   medical,
-  onTrafficPreview,
+  onTrafficDrop,
   onMedicalSelect,
 }: CommandTacticalMapProps) {
   const title = scenario === 'traffic'
@@ -31,6 +32,16 @@ export const CommandTacticalMap = memo(function CommandTacticalMap({
       : scenario === 'city-order'
         ? '北京路夜市秩序保障'
         : '广州城市安全协同态势'
+  const interaction = useMemo(() => ({
+    traffic: scenario === 'traffic'
+      ? {
+          enabled: traffic.phase === 'blocked' && traffic.activeRouteId === 'B',
+          activeRouteId: traffic.activeRouteId,
+          targetRouteId: 'C' as const,
+          onDrop: ({ routeProgress }: { routeId: 'C'; routeProgress: number }) => onTrafficDrop(routeProgress),
+        }
+      : null,
+  }), [onTrafficDrop, scenario, traffic.activeRouteId, traffic.phase])
 
   return (
     <section className="command-map-panel" aria-label={`${title}地图`}>
@@ -49,7 +60,7 @@ export const CommandTacticalMap = memo(function CommandTacticalMap({
       <div
         className="command-map-stage"
         data-execution-route={scenario === 'traffic'
-          ? ['acknowledged', 'en-route', 'arrived'].includes(traffic.phase) ? 'C' : 'B'
+          ? traffic.activeRouteId
           : scenario === 'medical'
             ? ['acknowledged', 'en-route', 'arrived'].includes(medical.phase) ? 'red-cross' : 'shiyi'
             : ''}
@@ -59,10 +70,12 @@ export const CommandTacticalMap = memo(function CommandTacticalMap({
             ? medical.ambulanceProgress.toFixed(3)
             : ''}
       >
-        <div className="command-map-base">{map}</div>
+        <CommandMapInteractionProvider value={interaction}>
+          <div className="command-map-base">{map}</div>
+        </CommandMapInteractionProvider>
 
         {scenario === 'traffic' && (
-          <TrafficMapControls traffic={traffic} onPreview={onTrafficPreview} />
+          <TrafficDragGuide traffic={traffic} />
         )}
         {scenario === 'medical' && (
           <MedicalMapHint medical={medical} onSelect={onMedicalSelect} />
@@ -83,47 +96,15 @@ export const CommandTacticalMap = memo(function CommandTacticalMap({
   )
 })
 
-function TrafficMapControls({ traffic, onPreview }: { traffic: TrafficCommandState; onPreview: () => void }) {
-  const previewVisible = traffic.activeRouteId === 'C'
+function TrafficDragGuide({ traffic }: { traffic: TrafficCommandState }) {
+  const routeChanged = traffic.activeRouteId === 'C'
   return (
-    <div className="command-route-controls" aria-label="中山路三条候选路线">
-      <div className="command-route-times">
-        <RouteTime code="A" label="常规" time="约 1.8 km · 12 分钟" color="#3B82F6" />
-        <RouteTime code="B" label="最短 · 受阻" time="约 1.0 km · 8 分钟" color="#E5484D" blocked />
-        <RouteTime code="C" label="推荐改线" time="约 1.2 km · 10 分钟" color="#30A46C" active={previewVisible} />
+    <div className={`command-drag-guide ${routeChanged ? 'is-preview' : ''}`} aria-live="polite">
+      <span><Route size={15} /></span>
+      <div>
+        <strong>{routeChanged ? '路线 C 已绑定地图预览' : '直接拖动车辆改线'}</strong>
+        <small>{routeChanged ? '地图已切换；新方案尚未人工确认下发' : '按住清障车 02，拖到绿色推荐路线 C'}</small>
       </div>
-      {!previewVisible && (
-        <button type="button" className="command-route-preview" onClick={onPreview}>
-          <Route size={14} />
-          选择阻塞前换道路口，预览路线 C
-        </button>
-      )}
-      {previewVisible && (
-        <div className="command-route-preview is-ready"><Route size={14} />路线 C 已在路网上生成，仅为 Preview</div>
-      )}
-    </div>
-  )
-}
-
-function RouteTime({
-  code,
-  label,
-  time,
-  color,
-  blocked = false,
-  active = false,
-}: {
-  code: string
-  label: string
-  time: string
-  color: string
-  blocked?: boolean
-  active?: boolean
-}) {
-  return (
-    <div className={`command-route-time ${blocked ? 'is-blocked' : ''} ${active ? 'is-active' : ''}`}>
-      <span className="command-route-time-code" style={{ backgroundColor: color }}>{code}</span>
-      <span><small>{label}</small><strong>{time}</strong></span>
     </div>
   )
 }
