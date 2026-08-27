@@ -80,10 +80,6 @@ export function LegacyDispatchWorkbench({
   const selectedFacilityLabel = selectedFacilityId === 'facility-red-cross'
     ? '红十字会医院'
     : '市一医院'
-  const targetFacilityLabel = targetFacilityId === 'facility-red-cross'
-    ? '红十字会医院'
-    : '市一医院'
-
   return (
     <main className="command-workbench" data-testid="legacy-dispatch-workbench">
       <section className="command-map-panel" aria-label={`${event.title}地图预览`}>
@@ -108,7 +104,7 @@ export function LegacyDispatchWorkbench({
             <span><Route size={15} /></span>
             <div>
               <strong>当前预览：{selectedFacilityLabel}</strong>
-              <small>可把救护车拖到{targetFacilityLabel}路线；预览不会自动确认或下发。</small>
+              <small>拖动救护车至静态候选路线即可改道；预览不会自动确认或下发。</small>
             </div>
           </div>
 

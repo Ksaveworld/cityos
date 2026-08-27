@@ -6,6 +6,7 @@ import type {
   CommandMedicalDragInteraction,
   CommandTrafficDragInteraction,
 } from './CommandMapInteractionContext'
+import { nearestRouteSnap } from './routeSnap'
 
 export interface CommandTrafficRouteAnnotation {
   routeId: 'A' | 'B' | 'C'
@@ -73,76 +74,25 @@ export const CommandMedicalMapMarker = memo(function CommandMedicalMapMarker({
   const styleReady = useMapStyleReady(map)
 
   if (!map || !styleReady || !unit) return null
-  const targetLabel = interaction.targetFacilityId === 'facility-red-cross'
-    ? '红十字会医院'
-    : '市一医院'
 
   return (
-    <>
-      {targetPath && (
-        <MedicalRouteTargetMarker
-          map={map}
-          path={targetPath}
-          facilityId={interaction.targetFacilityId}
-          label={`${targetLabel}候选路线`}
-        />
-      )}
-      <DraggableUnitMarker
-        map={map}
-        unit={unit}
-        targetPath={targetPath}
-        enabled={interaction.enabled}
-        kind="medical"
-        testId="draggable-medical-unit"
-        dragHint={`拖到${targetLabel}路线`}
-        compactHint="预览 · 未下发"
-        keyboardInstruction={`按住拖动到${targetLabel}路线；键盘按回车可生成同一换院预览`}
-        onDrop={(routeProgress) => interaction.onDrop({
-          facilityId: interaction.targetFacilityId,
-          routeProgress,
-        })}
-      />
-    </>
+    <DraggableUnitMarker
+      map={map}
+      unit={unit}
+      targetPath={targetPath}
+      enabled={interaction.enabled}
+      kind="medical"
+      testId="draggable-medical-unit"
+      dragHint="拖拽改道"
+      compactHint="预览 · 未下发"
+      keyboardInstruction="拖动到任一静态候选路线即可改道；键盘按回车可生成同一换院预览"
+      onDrop={(routeProgress) => interaction.onDrop({
+        facilityId: interaction.targetFacilityId,
+        routeProgress,
+      })}
+    />
   )
 })
-
-function MedicalRouteTargetMarker({
-  map,
-  path,
-  facilityId,
-  label,
-}: {
-  map: MapLibreMap
-  path: Array<[number, number]>
-  facilityId: CommandMedicalDragInteraction['targetFacilityId']
-  label: string
-}) {
-  const element = useMemo(() => {
-    const host = document.createElement('div')
-    host.className = 'command-medical-route-target-marker'
-    host.style.zIndex = '6'
-    return host
-  }, [])
-  const position = path[Math.max(0, Math.min(path.length - 1, Math.round((path.length - 1) * 0.28)))]
-
-  useEffect(() => {
-    const marker = new Marker({ element, anchor: 'center' })
-      .setLngLat(position)
-      .addTo(map)
-    return () => {
-      marker.remove()
-    }
-  }, [element, map, position])
-
-  return createPortal(
-    <div className="command-medical-route-target" data-testid="medical-route-drop-target" data-facility-id={facilityId}>
-      <span aria-hidden="true" />
-      <strong>{label}</strong>
-      <small>拖放到这里预览</small>
-    </div>,
-    element,
-  )
-}
 
 function useMapStyleReady(map: MapLibreMap | null) {
   const [ready, setReady] = useState(false)
@@ -284,7 +234,7 @@ function DraggableUnitMarker({
         return null
       }
       const lngLat = marker.getLngLat()
-      const snap = nearestRouteSnap(map, [lngLat.lng, lngLat.lat], path)
+      const snap = nearestRouteSnap((coordinate) => map.project(coordinate), [lngLat.lng, lngLat.lat], path)
       element.dataset.validDrop = snap.distancePixels <= DROP_TOLERANCE_PX ? 'true' : 'false'
       return snap
     }
@@ -336,7 +286,7 @@ function DraggableUnitMarker({
 
   const handleKeyboardRouteChange = () => {
     if (!enabled || !targetPath) return
-    const routeProgress = Math.max(0.3, nearestRouteSnap(map, unit.position, targetPath).progress)
+    const routeProgress = Math.max(0.3, nearestRouteSnap((coordinate) => map.project(coordinate), unit.position, targetPath).progress)
     onDrop(routeProgress)
   }
 
@@ -364,55 +314,4 @@ function DraggableUnitMarker({
     </div>,
     element,
   )
-}
-
-function nearestRouteSnap(
-  map: MapLibreMap,
-  position: [number, number],
-  path: Array<[number, number]>,
-) {
-  if (path.length < 2) return { position, progress: 0, distancePixels: Number.POSITIVE_INFINITY }
-  const drop = map.project(position)
-  const segmentLengths = path.slice(1).map((point, index) => coordinateDistance(path[index], point))
-  const totalLength = segmentLengths.reduce((total, length) => total + length, 0)
-  let best = {
-    position: path[0] as [number, number],
-    progress: 0,
-    distancePixels: Number.POSITIVE_INFINITY,
-  }
-  let traversed = 0
-
-  for (let index = 0; index < path.length - 1; index += 1) {
-    const from = path[index]
-    const to = path[index + 1]
-    const fromPixel = map.project(from)
-    const toPixel = map.project(to)
-    const dx = toPixel.x - fromPixel.x
-    const dy = toPixel.y - fromPixel.y
-    const denominator = dx * dx + dy * dy
-    const ratio = denominator <= 0
-      ? 0
-      : Math.max(0, Math.min(1, ((drop.x - fromPixel.x) * dx + (drop.y - fromPixel.y) * dy) / denominator))
-    const x = fromPixel.x + dx * ratio
-    const y = fromPixel.y + dy * ratio
-    const distancePixels = Math.hypot(drop.x - x, drop.y - y)
-    if (distancePixels < best.distancePixels) {
-      const segmentLength = segmentLengths[index]
-      best = {
-        position: [from[0] + (to[0] - from[0]) * ratio, from[1] + (to[1] - from[1]) * ratio],
-        progress: totalLength <= 0 ? 0 : (traversed + segmentLength * ratio) / totalLength,
-        distancePixels,
-      }
-    }
-    traversed += segmentLengths[index]
-  }
-
-  return best
-}
-
-function coordinateDistance(from: [number, number], to: [number, number]) {
-  const latitude = ((from[1] + to[1]) * Math.PI) / 360
-  const x = (to[0] - from[0]) * 111320 * Math.cos(latitude)
-  const y = (to[1] - from[1]) * 111320
-  return Math.hypot(x, y)
 }

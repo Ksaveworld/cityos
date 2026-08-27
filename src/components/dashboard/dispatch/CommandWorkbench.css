@@ -385,43 +385,9 @@ button.command-route-preview:hover {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--route-color) 16%, transparent), 0 3px 10px rgb(16 24 40 / 0.1);
 }
 
-.command-medical-route-target {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  align-items: center;
-  column-gap: 6px;
-  border: 1px solid rgb(14 154 167 / 0.42);
-  border-radius: 8px;
-  padding: 5px 7px;
-  background: rgb(255 255 255 / 0.95);
-  box-shadow: 0 4px 12px rgb(16 24 40 / 0.11);
-  color: #0b7f8a;
-  white-space: nowrap;
-  backdrop-filter: blur(8px);
-}
-
-.command-medical-route-target > span {
-  grid-row: span 2;
-  width: 8px;
-  height: 8px;
-  border: 2px solid #fff;
-  border-radius: 50%;
-  background: #0e9aa7;
-  box-shadow: 0 0 0 2px rgb(14 154 167 / 0.2);
-}
-
-.command-medical-route-target strong {
-  font-size: 8px;
-  line-height: 1.1;
-}
-
-.command-medical-route-target small {
-  color: #7a8598;
-  font-size: 7px;
-  line-height: 1.1;
-}
-
 .command-traffic-unit-marker {
+  width: 0;
+  height: 0;
   touch-action: none;
 }
 
@@ -434,15 +400,19 @@ button.command-route-preview:hover {
 }
 
 .command-traffic-unit {
-  position: relative;
-  display: flex;
-  align-items: center;
+  position: absolute;
+  top: -14.5px;
+  left: -14.5px;
+  display: block;
+  width: 29px;
+  height: 29px;
   outline: none;
   user-select: none;
 }
 
 .command-traffic-unit-halo {
   position: absolute;
+  top: -7px;
   left: -7px;
   width: 42px;
   height: 42px;
@@ -472,13 +442,17 @@ button.command-route-preview:hover {
 }
 
 .command-traffic-unit-label {
+  position: absolute;
+  top: 50%;
+  left: 35px;
   display: block;
-  margin-left: 6px;
+  margin-left: 0;
   border: 1px solid #e1e6ee;
   border-radius: 7px;
   padding: 4px 6px;
   background: rgb(255 255 255 / 0.95);
   box-shadow: 0 3px 10px rgb(16 24 40 / 0.08);
+  transform: translateY(-50%);
   white-space: nowrap;
 }
 
