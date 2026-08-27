@@ -7,6 +7,8 @@ import {
   parseFacilityStatusChanged,
   parseMode,
   parseTaskFeedback,
+  parseWorkflowReportSave,
+  parseWorkflowScenarioId,
 } from './contracts.ts'
 import { CityosApiError } from './errors.ts'
 
@@ -83,6 +85,52 @@ test('execute and feedback parsers enforce expected state', () => {
   }).expectedCurrentStatus, 'issued')
   assert.throws(
     () => parseExecuteActionRun({ expectedStatus: 'previewed' }),
+    (error: unknown) => error instanceof CityosApiError && error.code === 'INVALID_REQUEST',
+  )
+})
+
+test('workflow report parser accepts the frozen six-field draft', () => {
+  assert.equal(parseWorkflowScenarioId('yuexiu-medical'), 'yuexiu-medical')
+  assert.deepEqual(parseWorkflowReportSave({
+    expectedVersion: 1,
+    reportDraft: {
+      selectedPlanId: 'plan-b',
+      resourceCount: 4,
+      fireOptionId: 'fire-standard',
+      medicalOptionId: 'medical-red-cross',
+      trafficOptionId: 'traffic-green-wave',
+      decisionNote: '人工选择红十字会医院，接收状态待联络核实。',
+    },
+  }), {
+    expectedVersion: 1,
+    reportDraft: {
+      selectedPlanId: 'plan-b',
+      resourceCount: 4,
+      fireOptionId: 'fire-standard',
+      medicalOptionId: 'medical-red-cross',
+      trafficOptionId: 'traffic-green-wave',
+      decisionNote: '人工选择红十字会医院，接收状态待联络核实。',
+    },
+  })
+})
+
+test('workflow report parser rejects unknown scenarios and unbounded fields', () => {
+  assert.throws(
+    () => parseWorkflowScenarioId('unknown-demo'),
+    (error: unknown) => error instanceof CityosApiError && error.code === 'WORKFLOW_SCENARIO_NOT_FOUND',
+  )
+  assert.throws(
+    () => parseWorkflowReportSave({
+      expectedVersion: 1,
+      reportDraft: {
+        selectedPlanId: 'plan-a',
+        resourceCount: 101,
+        fireOptionId: 'fire-standard',
+        medicalOptionId: 'medical-standard',
+        trafficOptionId: 'traffic-standard',
+        decisionNote: '',
+      },
+    }),
     (error: unknown) => error instanceof CityosApiError && error.code === 'INVALID_REQUEST',
   )
 })

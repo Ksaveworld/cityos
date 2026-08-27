@@ -9,7 +9,10 @@ import type {
   ExecuteActionRunInput,
   TaskFeedbackInput,
   TaskFeedbackStatus,
+  SaveWorkflowReportInput,
+  WorkflowScenarioId,
 } from './types.ts'
+import { WORKFLOW_SCENARIO_IDS } from './types.ts'
 
 const MODES = new Set<DataMode>(['demo', 'live', 'live-degraded'])
 const CONFIDENCE = new Set<Confidence>(['confirmed', 'reported', 'inferred'])
@@ -35,6 +38,20 @@ function text(value: unknown, name: string): string {
     throw new CityosApiError(400, 'INVALID_REQUEST', `${name} 不能为空。`)
   }
   return value.trim()
+}
+
+function boundedText(value: unknown, name: string, maxLength: number, allowEmpty = false): string {
+  if (typeof value !== 'string') {
+    throw new CityosApiError(400, 'INVALID_REQUEST', `${name} 必须是字符串。`)
+  }
+  const normalized = value.trim()
+  if (!allowEmpty && !normalized) {
+    throw new CityosApiError(400, 'INVALID_REQUEST', `${name} 不能为空。`)
+  }
+  if (normalized.length > maxLength) {
+    throw new CityosApiError(400, 'INVALID_REQUEST', `${name} 不能超过 ${maxLength} 个字符。`)
+  }
+  return normalized
 }
 
 function positiveInteger(value: unknown, name: string): number {
@@ -68,6 +85,33 @@ export function parseMode(value: string | null): DataMode {
     throw new CityosApiError(400, 'INVALID_DATA_MODE', 'X-Data-Mode 必须是 demo、live 或 live-degraded。')
   }
   return value as DataMode
+}
+
+export function parseWorkflowScenarioId(value: string): WorkflowScenarioId {
+  if (!WORKFLOW_SCENARIO_IDS.includes(value as WorkflowScenarioId)) {
+    throw new CityosApiError(404, 'WORKFLOW_SCENARIO_NOT_FOUND', '演示工作流场景不存在。')
+  }
+  return value as WorkflowScenarioId
+}
+
+export function parseWorkflowReportSave(value: unknown): SaveWorkflowReportInput {
+  const body = record(value, '请求体')
+  const reportDraft = record(body.reportDraft, 'reportDraft')
+  const resourceCount = positiveInteger(reportDraft.resourceCount, 'reportDraft.resourceCount')
+  if (resourceCount > 100) {
+    throw new CityosApiError(400, 'INVALID_REQUEST', 'reportDraft.resourceCount 不能超过 100。')
+  }
+  return {
+    expectedVersion: positiveInteger(body.expectedVersion, 'expectedVersion'),
+    reportDraft: {
+      selectedPlanId: boundedText(reportDraft.selectedPlanId, 'reportDraft.selectedPlanId', 128),
+      resourceCount,
+      fireOptionId: boundedText(reportDraft.fireOptionId, 'reportDraft.fireOptionId', 128),
+      medicalOptionId: boundedText(reportDraft.medicalOptionId, 'reportDraft.medicalOptionId', 128),
+      trafficOptionId: boundedText(reportDraft.trafficOptionId, 'reportDraft.trafficOptionId', 128),
+      decisionNote: boundedText(reportDraft.decisionNote, 'reportDraft.decisionNote', 1000, true),
+    },
+  }
 }
 
 export function parseFacilityStatusChanged(value: unknown): FacilityStatusChangedInput {

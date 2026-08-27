@@ -7,6 +7,8 @@ import {
   parseFacilityStatusChanged,
   parseMode,
   parseTaskFeedback,
+  parseWorkflowReportSave,
+  parseWorkflowScenarioId,
 } from './contracts.ts'
 import {
   CAPABILITIES,
@@ -26,6 +28,8 @@ import {
   type LlmAuditReader,
 } from './llm-audit.ts'
 import type { MedicalService, WriteContext } from './types.ts'
+import type { WorkflowReportService } from './types.ts'
+import { createWorkflowReportService } from './workflow-report-service.ts'
 
 type Environment = Record<string, string | undefined>
 
@@ -35,6 +39,7 @@ interface RuntimeDependencies {
   service?: MedicalService
   authService?: AuthService
   llmAuditReader?: LlmAuditReader
+  workflowReportService?: WorkflowReportService
   randomId?: () => string
 }
 
@@ -102,6 +107,10 @@ function authFor(env: Environment, dependencies: RuntimeDependencies) {
   return dependencies.authService ?? createAuthService(getCityosDatabase(env))
 }
 
+function workflowReportFor(env: Environment, dependencies: RuntimeDependencies) {
+  return dependencies.workflowReportService ?? createWorkflowReportService(getCityosDatabase(env))
+}
+
 function authMode(env: Environment) {
   const mode = env.CITYOS_AUTH_MODE?.trim().toLowerCase() ?? 'optional'
   if (!['optional', 'required'].includes(mode)) {
@@ -156,6 +165,26 @@ async function routeRequest(request: Request, env: Environment, dependencies: Ru
     const reader = dependencies.llmAuditReader
       ?? createPostgresLlmAuditReader(getCityosDatabase(env))
     return jsonResponse(await reader(requestedLimit), 200, { 'X-Trace-Id': traceId })
+  }
+
+  const workflowReportMatch = /^\/v1\/workflow-scenarios\/([^/]+)\/report$/.exec(path)
+  if (workflowReportMatch) {
+    const scenarioId = parseWorkflowScenarioId(decodeURIComponent(workflowReportMatch[1]))
+    if (request.method === 'GET') {
+      await authorize(request, env, dependencies, CAPABILITIES.incidentRead)
+      const result = await workflowReportFor(env, dependencies).getReport(scenarioId)
+      return jsonResponse(result, 200, { 'X-Trace-Id': traceId })
+    }
+    if (request.method === 'POST') {
+      const principal = await authorize(request, env, dependencies, CAPABILITIES.workflowReportWrite)
+      const context = writeContext(request, traceId, principal)
+      if (context.mode !== 'demo') {
+        throw new CityosApiError(409, 'WORKFLOW_REPORT_DEMO_ONLY', '演示工作流报告只允许在 demo 模式保存。')
+      }
+      const input = parseWorkflowReportSave(await readJson(request))
+      const result = await workflowReportFor(env, dependencies).saveReport(scenarioId, input, context)
+      return jsonResponse(result, 201, { 'X-Trace-Id': traceId })
+    }
   }
 
   const incidentMatch = /^\/v1\/incidents\/([^/]+)(?:\/(context|plans|task-packages|decision-lineage|board))?$/.exec(path)

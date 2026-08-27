@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { handleCityosRequest } from './http.ts'
-import type { MedicalService } from './types.ts'
+import type { MedicalService, WorkflowReportService } from './types.ts'
 
 /**
  * 这些桩只回显入参，用来验路由、请求头和状态码，不构造完整响应。
@@ -26,6 +26,20 @@ function fakeService(overrides: Partial<MedicalService> = {}): MedicalService {
     getPlans: async () => ({ items: [] }),
     getTaskPackages: async () => ({ items: [] }),
     getDecisionLineage: async () => ({ items: [] }),
+    ...overrides,
+  }
+}
+
+function fakeWorkflowReportService(overrides: Partial<WorkflowReportService> = {}): WorkflowReportService {
+  return {
+    getReport: async (scenarioId) => stub({
+      scenarioId,
+      version: 1,
+      reportDraft: null,
+      storageState: 'fixture-baseline',
+      duplicate: false,
+    }),
+    saveReport: async (scenarioId, input, context) => stub({ scenarioId, input, context, version: 2 }),
     ...overrides,
   }
 }
@@ -233,4 +247,101 @@ test('task feedback requires the caller expected current status', async () => {
   const payload = await response.json() as { input: { expectedCurrentStatus: string } }
   assert.equal(response.status, 201)
   assert.equal(payload.input.expectedCurrentStatus, 'issued')
+})
+
+test('workflow report GET returns an explicit fixture baseline', async () => {
+  const response = await handleCityosRequest(
+    new Request('http://localhost/v1/workflow-scenarios/yuexiu-medical/report'),
+    {},
+    {
+      service: fakeService(),
+      workflowReportService: fakeWorkflowReportService(),
+      randomId: () => 'trace-workflow-read',
+    },
+  )
+  assert.equal(response.status, 200)
+  assert.deepEqual(await response.json(), {
+    scenarioId: 'yuexiu-medical',
+    version: 1,
+    reportDraft: null,
+    storageState: 'fixture-baseline',
+    duplicate: false,
+  })
+})
+
+test('workflow report POST persists a demo draft without approving or executing', async () => {
+  const response = await handleCityosRequest(
+    new Request('http://localhost/v1/workflow-scenarios/yuexiu-medical/report', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': 'workflow-report-1',
+        'X-Actor-Id': 'operator-1',
+        'X-Data-Mode': 'demo',
+      },
+      body: JSON.stringify({
+        expectedVersion: 1,
+        reportDraft: {
+          selectedPlanId: 'plan-b',
+          resourceCount: 4,
+          fireOptionId: 'fire-standard',
+          medicalOptionId: 'medical-red-cross',
+          trafficOptionId: 'traffic-green-wave',
+          decisionNote: '待人工确认。',
+        },
+      }),
+    }),
+    {},
+    {
+      service: fakeService(),
+      workflowReportService: fakeWorkflowReportService(),
+      randomId: () => 'trace-workflow-write',
+    },
+  )
+  const payload = await response.json() as {
+    input: { expectedVersion: number }
+    context: { actorId: string; mode: string }
+  }
+  assert.equal(response.status, 201)
+  assert.equal(payload.input.expectedVersion, 1)
+  assert.equal(payload.context.actorId, 'operator-1')
+  assert.equal(payload.context.mode, 'demo')
+})
+
+test('workflow report POST rejects non-demo writes before the service runs', async () => {
+  let called = false
+  const response = await handleCityosRequest(
+    new Request('http://localhost/v1/workflow-scenarios/yuexiu-medical/report', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': 'workflow-report-live',
+        'X-Actor-Id': 'operator-1',
+        'X-Data-Mode': 'live',
+      },
+      body: JSON.stringify({
+        expectedVersion: 1,
+        reportDraft: {
+          selectedPlanId: 'plan-a', resourceCount: 4,
+          fireOptionId: 'fire-standard', medicalOptionId: 'medical-standard',
+          trafficOptionId: 'traffic-standard', decisionNote: '',
+        },
+      }),
+    }),
+    {},
+    {
+      service: fakeService(),
+      workflowReportService: fakeWorkflowReportService({
+        saveReport: async () => {
+          called = true
+          return stub({})
+        },
+      }),
+      randomId: () => 'trace-workflow-live',
+    },
+  )
+  const payload = await response.json() as { error: { code: string } }
+  assert.equal(response.status, 409)
+  assert.equal(payload.error.code, 'WORKFLOW_REPORT_DEMO_ONLY')
+  assert.equal(called, false)
 })

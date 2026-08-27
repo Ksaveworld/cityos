@@ -13,6 +13,7 @@ export const CAPABILITIES = {
   adjustResourcesExecute: 'action:adjust_resources:execute',
   adapterEventWrite: 'adapter:event:write',
   taskFeedbackWrite: 'task:feedback:write',
+  workflowReportWrite: 'workflow:report:write',
   opsAuditRead: 'ops:audit:read',
 } as const
 export type Capability = typeof CAPABILITIES[keyof typeof CAPABILITIES]
@@ -24,12 +25,14 @@ const ROLE_CAPABILITIES: Record<AuthRole, readonly Capability[]> = {
     CAPABILITIES.incidentRead,
     CAPABILITIES.adjustResourcesPreview,
     CAPABILITIES.adjustResourcesExecute,
+    CAPABILITIES.workflowReportWrite,
   ],
   supervisor: [
     CAPABILITIES.incidentRead,
     CAPABILITIES.adjustResourcesPreview,
     CAPABILITIES.adjustResourcesConfirm,
     CAPABILITIES.adjustResourcesExecute,
+    CAPABILITIES.workflowReportWrite,
     CAPABILITIES.opsAuditRead,
   ],
   system_adapter: [CAPABILITIES.adapterEventWrite, CAPABILITIES.taskFeedbackWrite],

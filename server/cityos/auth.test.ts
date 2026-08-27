@@ -20,6 +20,8 @@ test('password uses a salted scrypt hash and rejects the wrong password', async 
 
 test('role capabilities keep preview, confirmation and adapter writes separated', () => {
   assert.deepEqual(capabilitiesForRoles(['viewer']), [CAPABILITIES.incidentRead])
+  assert.equal(capabilitiesForRoles(['viewer']).includes(CAPABILITIES.workflowReportWrite), false)
+  assert.equal(capabilitiesForRoles(['operator']).includes(CAPABILITIES.workflowReportWrite), true)
   assert.equal(capabilitiesForRoles(['operator']).includes(CAPABILITIES.adjustResourcesConfirm), false)
   assert.equal(capabilitiesForRoles(['supervisor']).includes(CAPABILITIES.adjustResourcesConfirm), true)
   assert.deepEqual(capabilitiesForRoles(['system_adapter']), [

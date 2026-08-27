@@ -2,6 +2,16 @@ export type DataMode = 'demo' | 'live' | 'live-degraded'
 export type Confidence = 'confirmed' | 'reported' | 'inferred'
 export type FacilityStatus = 'available' | 'temporarily_unavailable' | 'unknown'
 
+export const WORKFLOW_SCENARIO_IDS = [
+  'liwan-fire',
+  'yuexiu-police-current',
+  'yuexiu-medical',
+  'yuexiu-traffic',
+  'yuexiu-urban-order',
+  'tianhe-major',
+] as const
+export type WorkflowScenarioId = typeof WORKFLOW_SCENARIO_IDS[number]
+
 export interface EvidenceSourceInput {
   sourceSystem: string
   externalEventId: string
@@ -59,6 +69,39 @@ export interface TaskFeedbackInput {
   occurredAt: number
   receivedAt: number
   detail?: string
+}
+
+export interface WorkflowReportDraft {
+  selectedPlanId: string
+  resourceCount: number
+  fireOptionId: string
+  medicalOptionId: string
+  trafficOptionId: string
+  decisionNote: string
+}
+
+export interface SaveWorkflowReportInput {
+  expectedVersion: number
+  reportDraft: WorkflowReportDraft
+}
+
+export interface WorkflowReportVersion {
+  scenarioId: WorkflowScenarioId
+  version: number
+  reportDraft: WorkflowReportDraft | null
+  storageState: 'fixture-baseline' | 'persisted'
+  updatedBy?: string
+  updatedAt?: number
+  duplicate: boolean
+}
+
+export interface WorkflowReportService {
+  getReport(scenarioId: WorkflowScenarioId): Promise<WorkflowReportVersion>
+  saveReport(
+    scenarioId: WorkflowScenarioId,
+    input: SaveWorkflowReportInput,
+    context: WriteContext,
+  ): Promise<WorkflowReportVersion>
 }
 
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue }
