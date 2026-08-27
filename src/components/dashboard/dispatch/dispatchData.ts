@@ -1,17 +1,48 @@
-import { DISPATCH_UNITS, TODAY_EVENTS, type DispatchUnit, type TodayEvent } from '../board/boardData'
+import { DISPATCH_UNITS, TODAY_EVENTS, type DispatchUnit, type TodayEvent } from '../board/boardData.ts'
 import type { WorkflowSession } from '../workflow/types'
 
 export type DispatchPlanningState = 'current' | 'candidate' | 'impacted'
 export type DispatchOperationStatus = 'idle' | 'pending-approval' | 'approved' | 'sent'
 
-export interface DispatchFacility {
+export type DispatchFacilityId = 'facility-medical-reference' | 'facility-red-cross' | 'facility-shiyi'
+export type DispatchSelectableFacilityId = 'facility-red-cross' | 'facility-shiyi'
+export type DispatchFacilityRouteRole = 'primary' | 'secondary' | 'medical'
+
+export interface DispatchFacilityDataOrigin {
+  position: string
+  receivingState: '模拟，待核实'
+  eta: '演示估算' | '待核实'
+}
+
+export interface DispatchFacilityRouteConfig {
   id: string
-  unitId: string
+  role: DispatchFacilityRouteRole
+  displayLabel: string
+  color: [number, number, number, number]
+  defaultProgress: number
+}
+
+export interface DispatchFacility {
+  id: DispatchFacilityId
+  unitId: string | null
   name: string
   position: [number, number]
   receivingState: string
+  receivingStatePriority: number
+  planningState: Readonly<Record<DispatchPlanningState, boolean>>
+  selectable: boolean
+  etaMinutes: number | null
+  dataOrigin: DispatchFacilityDataOrigin
+  resolutionOptionIds: {
+    fire: string | null
+    medical: string | null
+  }
+  route: DispatchFacilityRouteConfig
+  recommendationBasis: string
   note: string
 }
+
+export const DISPATCH_HOSPITAL_RECOMMENDATION_RULE = '接收状态优先，同级再比较演示 ETA；只形成建议联络顺序，不代表自动选院或已确认接收。'
 
 export interface DispatchAssignment {
   eventId: string
@@ -69,22 +100,131 @@ export interface DispatchCase {
 
 export const DISPATCH_FACILITIES: DispatchFacility[] = [
   {
-    id: 'facility-shiyi',
-    unitId: 'u-medical-shiyi',
-    name: '广州市第一人民医院',
-    position: [113.2511865, 23.133973],
-    receivingState: '接收能力下降',
-    note: '名称与坐标参考公开静态 POI；不展示真实床位或专科适配。',
+    id: 'facility-medical-reference',
+    unitId: null,
+    name: '原接收医院（模拟）',
+    position: [113.25575, 23.11425],
+    receivingState: '承接能力不足（模拟，待核实）',
+    receivingStatePriority: 1,
+    planningState: { current: true, impacted: true, candidate: false },
+    selectable: false,
+    etaMinutes: null,
+    dataOrigin: {
+      position: '既有“医疗参考”模拟点位',
+      receivingState: '模拟，待核实',
+      eta: '待核实',
+    },
+    resolutionOptionIds: { fire: null, medical: null },
+    route: {
+      id: 'route-medical-reference',
+      role: 'primary',
+      displayLabel: '原接收路线 · 原接收医院（模拟）',
+      color: [229, 72, 77, 205],
+      defaultProgress: 0.195,
+    },
+    recommendationBasis: '受影响基准医院不参与候选排序，也不得进入可选择方案。',
+    note: '点位为既有演示锚点；医院身份、接收能力与 ETA 均为模拟或待核实。',
   },
   {
     id: 'facility-red-cross',
     unitId: 'u-medical-zhongshan',
     name: '广州市红十字会医院',
     position: [113.2571165, 23.1072521],
-    receivingState: '可联络',
-    note: '名称与坐标参考公开静态 POI。',
+    receivingState: '可联络（模拟，待核实）',
+    receivingStatePriority: 0,
+    planningState: { current: false, impacted: false, candidate: true },
+    selectable: true,
+    etaMinutes: 6,
+    dataOrigin: {
+      position: '公开静态 POI',
+      receivingState: '模拟，待核实',
+      eta: '演示估算',
+    },
+    resolutionOptionIds: { fire: 'hospital-red-cross', medical: 'medical-red-cross' },
+    route: {
+      id: 'route-red-cross',
+      role: 'secondary',
+      displayLabel: '候选转运路线 · 红十字会医院',
+      color: [14, 154, 167, 225],
+      defaultProgress: 0.41,
+    },
+    recommendationBasis: DISPATCH_HOSPITAL_RECOMMENDATION_RULE,
+    note: '名称与坐标参考公开静态 POI；接收状态为模拟待核实，ETA 为演示估算。',
+  },
+  {
+    id: 'facility-shiyi',
+    unitId: 'u-medical-shiyi',
+    name: '广州市第一人民医院',
+    position: [113.2511865, 23.133973],
+    receivingState: '可联络（模拟，待核实）',
+    receivingStatePriority: 0,
+    planningState: { current: false, impacted: false, candidate: true },
+    selectable: true,
+    etaMinutes: 10,
+    dataOrigin: {
+      position: '公开静态 POI',
+      receivingState: '模拟，待核实',
+      eta: '演示估算',
+    },
+    resolutionOptionIds: { fire: 'hospital-shiyi', medical: 'medical-shiyi' },
+    route: {
+      id: 'route-shiyi',
+      role: 'medical',
+      displayLabel: '候选转运路线 · 市一医院',
+      color: [91, 91, 214, 215],
+      defaultProgress: 0.3,
+    },
+    recommendationBasis: DISPATCH_HOSPITAL_RECOMMENDATION_RULE,
+    note: '名称与坐标参考公开静态 POI；接收状态为模拟待核实，ETA 为演示估算。',
   },
 ]
+
+const FACILITY_BY_ID = new Map(DISPATCH_FACILITIES.map((facility) => [facility.id, facility]))
+
+export function getDispatchFacility(facilityId: string | null | undefined) {
+  return facilityId ? FACILITY_BY_ID.get(facilityId as DispatchFacilityId) ?? null : null
+}
+
+export function getSelectableDispatchFacilities() {
+  return DISPATCH_FACILITIES.filter((facility): facility is DispatchFacility & { id: DispatchSelectableFacilityId; unitId: string } => (
+    facility.selectable && facility.planningState.candidate && facility.unitId !== null
+  ))
+}
+
+export function rankDispatchFacilitiesForContact(
+  facilities: readonly DispatchFacility[] = getSelectableDispatchFacilities(),
+) {
+  return [...facilities].sort((left, right) => (
+    left.receivingStatePriority - right.receivingStatePriority
+      || (left.etaMinutes ?? Number.POSITIVE_INFINITY) - (right.etaMinutes ?? Number.POSITIVE_INFINITY)
+  ))
+}
+
+export function dispatchCandidateReceivingStateSummary() {
+  return rankDispatchFacilitiesForContact()
+    .map((facility) => `${facility.name}：${facility.receivingState}`)
+    .join('；')
+}
+
+export function isDispatchSelectableFacilityId(facilityId: string): facilityId is DispatchSelectableFacilityId {
+  return getSelectableDispatchFacilities().some((facility) => facility.id === facilityId)
+}
+
+export function resolveDispatchFacilityByOptionId(optionId: string) {
+  return DISPATCH_FACILITIES.find((facility) => (
+    facility.resolutionOptionIds.fire === optionId || facility.resolutionOptionIds.medical === optionId
+  )) ?? null
+}
+
+export function dispatchFacilityEtaLabel(facility: DispatchFacility) {
+  return facility.etaMinutes === null ? 'ETA 待核实' : `ETA 约 ${facility.etaMinutes} 分钟（演示估算）`
+}
+
+export function dispatchFacilityPlanningState(facility: DispatchFacility): DispatchPlanningState {
+  if (facility.planningState.impacted) return 'impacted'
+  if (facility.planningState.candidate) return 'candidate'
+  return 'current'
+}
 
 export const DISPATCH_CASES: DispatchCase[] = [
   {
@@ -158,16 +298,16 @@ export const DISPATCH_CASES: DispatchCase[] = [
     scenarioId: 'yuexiu-medical',
     taskLabel: '急救转运与接收确认任务',
     triggerSource: '接收点能力变化 · 联络回传',
-    reason: '市一医院接收能力下降，需要调整接收点与转运协同。',
-    currentSummary: '市一医院接收点 · 1 个急救保障单元',
+    reason: '原接收医院（模拟）承接能力不足，需要调整接收点与转运协同。',
+    currentSummary: '原接收医院（模拟）受影响 · 1 个急救保障单元',
     historyReference: '分级转运假设集 medical-triage-v1 · 知识库草稿',
-    recommendedAction: '先确认红十字会医院的接收状态，再将接收点与急救单元作为同一个版本草案提交人工确认。',
+    recommendedAction: '先按接收状态、再按演示 ETA 比较两家候选的联络顺序；选择只更新草案，仍需人工确认接收状态与任务版本。',
     difficulties: [
       {
         id: 'medical-capacity-drop',
         priority: 'P0',
-        title: '原接收点能力下降',
-        observed: '市一医院接收能力被标记为下降，当前需要重新确认。',
+        title: '原接收点承接能力不足',
+        observed: '原接收医院（模拟）被标记为承接能力不足，当前状态仍待人工核实。',
         constraint: '不得展示或推断真实床位、专科能力与临床分级。',
         suggestedAction: '比较可联络接收点，并同步修改转运目的地与联络负责人。',
         expectedImpact: '接收确认可能提前，但 ETA 与接收能力仍需人工核验。',
@@ -185,7 +325,7 @@ export const DISPATCH_CASES: DispatchCase[] = [
     primaryLabel: '急救保障单元',
     candidateUnitIds: ['u-medical-shiyi', 'u-medical-zhongshan', 'u-medical-liwan-01'],
     ownerOptions: ['急救联络负责人', '转运协调负责人'],
-    facilityIds: ['facility-shiyi', 'facility-red-cross'],
+    facilityIds: ['facility-red-cross', 'facility-shiyi'],
   },
   {
     eventId: 'ev-traffic-zhongshan',
@@ -335,7 +475,7 @@ export function createInitialDispatchAssignments(): Record<string, DispatchAssig
   const assignments: DispatchAssignment[] = [
     { eventId: 'ev-fire-finance', scenarioId: 'liwan-fire', primaryUnitId: 'u-fire-lied', assignedUnitIds: ['u-fire-lied', 'u-medical-liwan-01'], facilityId: null, owner: '消防值守组' },
     { eventId: 'ev-police-station-delay', scenarioId: 'yuexiu-police-current', primaryUnitId: 'u-police-yuexiu-01', assignedUnitIds: ['u-police-yuexiu-01', 'u-traffic-yuexiu-02'], facilityId: null, owner: '站区协同负责人' },
-    { eventId: 'ev-medical-panfu', scenarioId: 'yuexiu-medical', primaryUnitId: 'u-medical-shiyi', assignedUnitIds: ['u-medical-shiyi'], facilityId: 'facility-shiyi', owner: '急救联络负责人' },
+    { eventId: 'ev-medical-panfu', scenarioId: 'yuexiu-medical', primaryUnitId: 'u-medical-shiyi', assignedUnitIds: ['u-medical-shiyi'], facilityId: 'facility-medical-reference', owner: '急救联络负责人' },
     { eventId: 'ev-traffic-zhongshan', scenarioId: 'yuexiu-traffic', primaryUnitId: 'u-traffic-zhongshan', assignedUnitIds: ['u-traffic-zhongshan', 'u-medical-yuexiu-02'], facilityId: null, owner: '道路保障负责人' },
     { eventId: 'ev-city-order-beijing', scenarioId: 'yuexiu-urban-order', primaryUnitId: 'u-urban-order-beijing-01', assignedUnitIds: ['u-urban-order-beijing-01'], facilityId: null, owner: '北京路市容秩序协同负责人（模拟）' },
     { eventId: 'ev-major-tianhe', scenarioId: 'tianhe-major', primaryUnitId: 'u-traffic-tianhe-04', assignedUnitIds: ['u-traffic-tianhe-04', 'u-fire-shipai', 'u-medical-haizhu-03'], facilityId: null, owner: '现场总协调' },

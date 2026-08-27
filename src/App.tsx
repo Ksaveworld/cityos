@@ -24,7 +24,6 @@ import { ResourceDispatchWorkspace } from '@/components/dashboard/dispatch/Resou
 import { CommandWorkbench } from '@/components/dashboard/dispatch/CommandWorkbench'
 import type { CommandScenarioId } from '@/components/dashboard/dispatch/commandWorkbenchModel'
 import { LegacyDispatchWorkbench } from '@/components/dashboard/dispatch/LegacyDispatchWorkbench'
-import type { CommandMedicalFacilityId } from '@/components/dashboard/dispatch/CommandMapInteractionContext'
 import {
   ActiveEventDispatchContext,
   type ActiveDispatchEvent,
@@ -37,6 +36,7 @@ import {
   createInitialDispatchOperations,
   dispatchDraftChanged,
   findAssignedEvent,
+  getDispatchFacility,
   getDispatchCase,
   getDispatchEvent,
   getDispatchUnit,
@@ -111,8 +111,8 @@ const COMMAND_WORKBENCH_EVENT_IDS = new Set([
   'ev-medical-panfu',
   'ev-city-order-beijing',
 ])
-const LEGACY_ROUTINE_HOSPITAL_TRANSFERS = ['facility-shiyi', 'facility-red-cross']
-  .map((facilityId) => createRoutineHospitalTransfer(DISPATCH_FACILITIES.find((facility) => facility.id === facilityId)))
+const LEGACY_ROUTINE_HOSPITAL_TRANSFERS = DISPATCH_FACILITIES
+  .map((facility) => createRoutineHospitalTransfer(facility))
   .filter((transfer): transfer is NonNullable<typeof transfer> => Boolean(transfer))
 
 function usesCommandWorkbench(event: ActiveDispatchEvent | null): event is ActiveDispatchEvent {
@@ -1247,7 +1247,7 @@ function LegacyApp() {
     ? activeDispatchEvent
     : null
   const legacyDispatchEvent = activeDispatchEvent && !commandWorkbenchEvent && !legacyMapDispatchEvent ? activeDispatchEvent : null
-  const legacySelectedFacilityId = (resolveRoutineHospitalFacilityId(dispatchResolutionOptionId) ?? 'facility-shiyi') as CommandMedicalFacilityId
+  const legacySelectedFacilityId = resolveRoutineHospitalFacilityId(dispatchResolutionOptionId) ?? 'facility-medical-reference'
   const legacyHospitalTransfers = LEGACY_ROUTINE_HOSPITAL_TRANSFERS
   const legacyHospitalTransfer = legacyHospitalTransfers.find((transfer) => transfer.id === legacySelectedFacilityId) ?? null
   const selectedDispatchCase = getDispatchCase(selectedDispatchEventId)
@@ -1401,9 +1401,10 @@ function LegacyApp() {
               event={legacyMapDispatchEvent}
               selectedFacilityId={legacySelectedFacilityId}
               advisorRequestId={dispatchPromptRequest?.id}
-              onSelectFacility={(facilityId) => setDispatchResolutionOptionId(
-                facilityId === 'facility-red-cross' ? 'hospital-red-cross' : 'hospital-shiyi',
-              )}
+              onSelectFacility={(facilityId) => {
+                const optionId = getDispatchFacility(facilityId)?.resolutionOptionIds.fire
+                if (optionId) setDispatchResolutionOptionId(optionId)
+              }}
               renderMap={(executionFrame) => (
                 <CityMap
                   site={scenario.site}

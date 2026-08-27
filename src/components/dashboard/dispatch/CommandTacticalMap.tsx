@@ -8,6 +8,11 @@ import type {
 } from './commandWorkbenchModel'
 import { CommandMapInteractionProvider } from './CommandMapInteractionProvider'
 import type { CommandMedicalRouteDrop } from './CommandMapInteractionContext'
+import {
+  dispatchFacilityEtaLabel,
+  getDispatchFacility,
+  getSelectableDispatchFacilities,
+} from './dispatchData'
 
 interface CommandTacticalMapProps {
   scenario: CommandScenarioId
@@ -16,7 +21,7 @@ interface CommandTacticalMapProps {
   traffic: TrafficCommandState
   medical: MedicalCommandState
   onTrafficDrop: (routeProgress: number) => void
-  onMedicalDrop: (routeProgress: number) => void
+  onMedicalDrop: (drop: CommandMedicalRouteDrop) => void
 }
 
 export const CommandTacticalMap = memo(function CommandTacticalMap({
@@ -28,6 +33,7 @@ export const CommandTacticalMap = memo(function CommandTacticalMap({
   onTrafficDrop,
   onMedicalDrop,
 }: CommandTacticalMapProps) {
+  const medicalEditable = ['blocked', 'recalculating', 'awaiting-approval'].includes(medical.phase)
   const title = scenario === 'traffic'
     ? '中山路清障车在途改线'
     : scenario === 'medical'
@@ -46,13 +52,18 @@ export const CommandTacticalMap = memo(function CommandTacticalMap({
       : null,
     medical: scenario === 'medical'
       ? {
-          enabled: medical.phase === 'blocked' && medical.selectedFacilityId === 'facility-shiyi',
+          enabled: medicalEditable,
           selectedFacilityId: medical.selectedFacilityId,
-          targetFacilityId: 'facility-red-cross' as const,
-          onDrop: ({ routeProgress }: CommandMedicalRouteDrop) => onMedicalDrop(routeProgress),
+          targetFacilityIds: medicalEditable
+            ? getSelectableDispatchFacilities()
+                .filter((facility) => facility.id !== medical.selectedFacilityId)
+                .map((facility) => facility.id)
+            : [],
+          markerStatusLabel: medicalMarkerStatusLabel(medical.phase),
+          onDrop: (drop: CommandMedicalRouteDrop) => onMedicalDrop(drop),
         }
       : null,
-  }), [medical.phase, medical.selectedFacilityId, onMedicalDrop, onTrafficDrop, scenario, traffic.activeRouteId, traffic.phase])
+  }), [medical.phase, medical.selectedFacilityId, medicalEditable, onMedicalDrop, onTrafficDrop, scenario, traffic.activeRouteId, traffic.phase])
 
   return (
     <section className="command-map-panel" aria-label={`${title}地图`}>
@@ -73,7 +84,7 @@ export const CommandTacticalMap = memo(function CommandTacticalMap({
         data-preview-route={scenario === 'traffic'
           ? traffic.activeRouteId
           : scenario === 'medical'
-            ? medical.selectedFacilityId === 'facility-red-cross' ? 'red-cross' : 'shiyi'
+            ? medical.selectedFacilityId
             : ''}
         data-vehicle-progress={scenario === 'traffic'
           ? traffic.carProgress.toFixed(3)
@@ -109,6 +120,15 @@ export const CommandTacticalMap = memo(function CommandTacticalMap({
   )
 })
 
+function medicalMarkerStatusLabel(phase: MedicalCommandState['phase']) {
+  if (phase === 'approved') return '已批准 · 待发送'
+  if (phase === 'sent-awaiting-ack') return '已模拟发送 · 待签收'
+  if (phase === 'acknowledged') return '已模拟签收 · 待执行'
+  if (phase === 'en-route') return '模拟执行中'
+  if (phase === 'arrived') return '已模拟抵达'
+  return '预览 · 未下发'
+}
+
 function TrafficDragGuide({ traffic }: { traffic: TrafficCommandState }) {
   const routeChanged = traffic.activeRouteId === 'C'
   return (
@@ -123,13 +143,39 @@ function TrafficDragGuide({ traffic }: { traffic: TrafficCommandState }) {
 }
 
 function MedicalDragGuide({ medical }: { medical: MedicalCommandState }) {
-  const selected = medical.selectedFacilityId === 'facility-red-cross'
+  const selectedFacility = getDispatchFacility(medical.selectedFacilityId)
+  const selectedCandidate = Boolean(selectedFacility?.selectable)
+  const previewEditable = ['blocked', 'recalculating', 'awaiting-approval'].includes(medical.phase)
+  const guide = !selectedCandidate || !selectedFacility
+    ? {
+        title: '直接拖动救护车更换接收路线',
+        detail: '按住救护车 AMB-02，拖到任一候选医院路线',
+      }
+    : previewEditable
+      ? {
+          title: `${selectedFacility.name}路线已绑定预览`,
+          detail: `${dispatchFacilityEtaLabel(selectedFacility)}；确认前可继续点击或拖拽切换`,
+        }
+      : medical.phase === 'approved'
+        ? {
+            title: `${selectedFacility.name}路线已人工批准`,
+            detail: `${dispatchFacilityEtaLabel(selectedFacility)}；候选已冻结，任务包尚未发送`,
+          }
+        : medical.phase === 'sent-awaiting-ack'
+          ? {
+              title: `${selectedFacility.name}路线已模拟发送`,
+              detail: `${dispatchFacilityEtaLabel(selectedFacility)}；候选已冻结，等待模拟签收`,
+            }
+          : {
+              title: `${selectedFacility.name}路线已绑定当前任务`,
+              detail: `${dispatchFacilityEtaLabel(selectedFacility)}；候选已冻结，如需调整请重置演示`,
+            }
   return (
-    <div className={`command-drag-guide is-medical ${selected ? 'is-preview' : ''}`} aria-live="polite">
+    <div className={`command-drag-guide is-medical ${selectedCandidate ? 'is-preview' : ''}`} aria-live="polite">
       <span><Route size={15} /></span>
       <div>
-        <strong>{selected ? '红十字会医院路线已绑定预览' : '直接拖动救护车更换接收路线'}</strong>
-        <small>{selected ? '地图已切换；新转运方案尚未人工批准下发' : '按住救护车 AMB-02，拖到青色候选路线'}</small>
+        <strong>{guide.title}</strong>
+        <small>{guide.detail}</small>
       </div>
     </div>
   )

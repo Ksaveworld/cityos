@@ -75,8 +75,8 @@ const SIGNALS_BY_EVENT: Record<string, Array<{ time: string; label: string; deta
     { time: '14:44:25', label: '路线重算', detail: 'A / B / C 三路线等待人工改线', confidence: 'pending' },
   ],
   'ev-medical-panfu': [
-    { time: '14:48:02', label: '接收回传', detail: '市一医院接收能力下降 · 模拟', confidence: 'confirmed' },
-    { time: '14:48:16', label: '候选检索', detail: '红十字会医院状态待联络', confidence: 'pending' },
+    { time: '14:48:02', label: '接收回传', detail: '原接收医院承接能力不足 · 模拟待核实', confidence: 'pending' },
+    { time: '14:48:16', label: '候选检索', detail: '两家候选 ETA 已载入 · 演示估算', confidence: 'pending' },
   ],
   'ev-city-order-beijing': [
     { time: '22:41:08', label: '商户图片', detail: '夜市摊位疑似占用通道 · 模拟', confidence: 'pending' },

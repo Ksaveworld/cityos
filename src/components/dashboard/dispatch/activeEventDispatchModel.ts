@@ -1,5 +1,10 @@
 import type { DomainFixture, TaskAssignment, TaskDispatchOverride, WorkflowSession } from '../workflow/types'
-import { DISPATCH_FACILITIES } from './dispatchData'
+import {
+  dispatchFacilityEtaLabel,
+  dispatchCandidateReceivingStateSummary,
+  rankDispatchFacilitiesForContact,
+  resolveDispatchFacilityByOptionId,
+} from './dispatchData'
 
 export interface ActiveDispatchEvent {
   id: string
@@ -30,43 +35,7 @@ export interface DispatchOptionAnalysis {
   tradeoff: string
   recommended: boolean
   stateReason?: string
-  distanceReason?: string
-}
-
-function straightLineDistanceKm(left: [number, number], right: [number, number]) {
-  const radians = Math.PI / 180
-  const leftLatitude = left[1] * radians
-  const rightLatitude = right[1] * radians
-  const latitudeDelta = (right[1] - left[1]) * radians
-  const longitudeDelta = (right[0] - left[0]) * radians
-  const haversine = Math.sin(latitudeDelta / 2) ** 2
-    + Math.cos(leftLatitude) * Math.cos(rightLatitude) * Math.sin(longitudeDelta / 2) ** 2
-  return 2 * 6371 * Math.asin(Math.sqrt(haversine))
-}
-
-function hospitalComparison(event: ActiveDispatchEvent) {
-  const redCross = DISPATCH_FACILITIES.find((facility) => facility.id === 'facility-red-cross')
-  const firstPeople = DISPATCH_FACILITIES.find((facility) => facility.id === 'facility-shiyi')
-  if (!redCross || !firstPeople) return null
-  const redCrossDistance = event.position ? straightLineDistanceKm(event.position, redCross.position) : null
-  const firstPeopleDistance = event.position ? straightLineDistanceKm(event.position, firstPeople.position) : null
-  return { redCross, firstPeople, redCrossDistance, firstPeopleDistance }
-}
-
-function distanceComparisonReason(
-  subjectName: string,
-  subjectDistance: number | null,
-  comparisonName: string,
-  comparisonDistance: number | null,
-) {
-  if (subjectDistance === null || comparisonDistance === null) return ''
-  const difference = comparisonDistance - subjectDistance
-  const comparison = Math.abs(difference) < 0.05
-    ? '两者基本相当'
-    : difference > 0
-      ? `较${comparisonName}约短 ${Math.abs(difference).toFixed(1)} 公里`
-      : `较${comparisonName}约长 ${Math.abs(difference).toFixed(1)} 公里`
-  return `按当前事件点与公开静态点位直线测算，${subjectName}约 ${subjectDistance.toFixed(1)} 公里，${comparisonName}约 ${comparisonDistance.toFixed(1)} 公里，${comparison}。`
+  etaReason?: string
 }
 
 export function resolveDispatchOptionAnalysis(
@@ -75,39 +44,19 @@ export function resolveDispatchOptionAnalysis(
   index: number,
 ): DispatchOptionAnalysis {
   if (event.kind === 'daily') {
-    const comparison = hospitalComparison(event)
-    const isRedCross = ['hospital-red-cross', 'medical-red-cross'].includes(option.optionId)
-    const isFirstPeople = ['hospital-shiyi', 'medical-shiyi'].includes(option.optionId)
-    if (comparison && isRedCross) {
-      const stateReason = `当前候选台账显示${comparison.redCross.name}“${comparison.redCross.receivingState}”，${comparison.firstPeople.name}“${comparison.firstPeople.receivingState}”，因此先向${comparison.redCross.name}发起接收确认。`
-      const distanceReason = distanceComparisonReason(
-        comparison.redCross.name,
-        comparison.redCrossDistance,
-        comparison.firstPeople.name,
-        comparison.firstPeopleDistance,
-      )
+    const facility = resolveDispatchFacilityByOptionId(option.optionId)
+    if (facility?.selectable) {
+      const ranked = rankDispatchFacilitiesForContact()
+      const contactIndex = ranked.findIndex((candidate) => candidate.id === facility.id)
+      const firstContact = contactIndex === 0
+      const stateReason = `临时演示规则先比较接收状态；候选配置为${dispatchCandidateReceivingStateSummary()}，同级再比较演示 ETA。`
+      const etaReason = `${facility.name}${dispatchFacilityEtaLabel(facility)}，因此列为第 ${contactIndex + 1} 联络顺序。`
       return {
-        benefit: `${stateReason}${distanceReason}`,
-        tradeoff: '“可联络”不等于已确认接收，静态直线距离也不等于实际转运耗时；医院实时床位、急救接收能力和院内排队状态仍需回传确认。',
-        recommended: true,
+        benefit: `${stateReason}${etaReason}`,
+        tradeoff: '“可联络”不等于“已确认接收”；联络顺序也不是自动选院结论。真实接收能力、交接窗口、路况与 ETA 均需人工核实。',
+        recommended: firstContact,
         stateReason,
-        distanceReason,
-      }
-    }
-    if (comparison && isFirstPeople) {
-      const stateReason = `当前候选台账显示${comparison.firstPeople.name}“${comparison.firstPeople.receivingState}”，在取得新的接收回传前不作为第一联络顺序。`
-      const distanceReason = distanceComparisonReason(
-        comparison.firstPeople.name,
-        comparison.firstPeopleDistance,
-        comparison.redCross.name,
-        comparison.redCrossDistance,
-      )
-      return {
-        benefit: `${stateReason}${distanceReason}`,
-        tradeoff: '如果人工已取得新的接收确认，仍可保留这一候选；否则不应仅凭静态距离生成调整任务包。',
-        recommended: false,
-        stateReason,
-        distanceReason,
+        etaReason,
       }
     }
   }
@@ -136,6 +85,27 @@ function resolutionOption(
   return { department: assignment.department, task: session.inputValues.dispatchOverrideTask || assignment.task, optionId, optionLabel, location, owner, vehicles, note }
 }
 
+function hospitalResolutionOptions(
+  session: WorkflowSession,
+  assignment: TaskAssignment,
+  context: 'fire' | 'medical',
+) {
+  return rankDispatchFacilitiesForContact().flatMap((facility) => {
+    const optionId = facility.resolutionOptionIds[context]
+    if (!optionId) return []
+    return [resolutionOption(
+      session,
+      assignment,
+      optionId,
+      facility.name,
+      facility.name,
+      assignment.owner,
+      assignment.vehicles,
+      `选择后仅更新调度草案；${facility.receivingState}，${dispatchFacilityEtaLabel(facility)}，等待人工确认接收与任务版本。`,
+    )]
+  })
+}
+
 export function resolveDispatchException(event: ActiveDispatchEvent, assignments: TaskAssignment[]): DispatchException | null {
   if (event.session.deliveryStatus !== 'completed' || assignments.length === 0) return null
   // 历史链路每个案例只有一项预置资源异常。人工调整已经写入任务包后，
@@ -152,10 +122,7 @@ export function resolveDispatchException(event: ActiveDispatchEvent, assignments
       detail: '任务包完成后收到新的接收资源状态，原医疗安排需要重新确认。',
       signals: ['周边交通事故增加，接收需求上升', '原医疗单元回传无法继续支援', '备用接收医院需要重新确认'],
       action: '在本页选择新的接收医院，确认后返回任务下发。',
-      options: [
-        resolutionOption(event.session, assignment, 'hospital-red-cross', '广州市红十字会医院', '广州市红十字会医院', assignment.owner, assignment.vehicles, '接收医院已调整；回传接收确认、到场与异常状态。'),
-        resolutionOption(event.session, assignment, 'hospital-shiyi', '广州市第一人民医院', '广州市第一人民医院', assignment.owner, assignment.vehicles, '接收医院已调整；回传接收确认、到场与异常状态。'),
-      ],
+      options: hospitalResolutionOptions(event.session, assignment, 'fire'),
     }
   }
 
@@ -200,13 +167,10 @@ export function resolveDispatchException(event: ActiveDispatchEvent, assignments
       department: assignment.department,
       task: assignment.task,
       title: '接收点能力变化',
-      detail: '原接收点状态发生变化，需要重新选择接收医院与转运目的地。',
-      signals: ['原接收点能力下降', '转运目的地需要同步更新', '接收确认仍待回传'],
-      action: '在本页切换接收医院，确认后返回任务下发。',
-      options: [
-        resolutionOption(event.session, assignment, 'medical-red-cross', '广州市红十字会医院', '广州市红十字会医院', assignment.owner, assignment.vehicles, '接收点与转运目的地已同步调整；回传接收确认。'),
-        resolutionOption(event.session, assignment, 'medical-shiyi', '广州市第一人民医院', '广州市第一人民医院', assignment.owner, assignment.vehicles, '接收点与转运目的地已同步调整；回传接收确认。'),
-      ],
+      detail: '原接收医院（模拟）承接能力不足，需要重新选择接收医院与转运目的地。',
+      signals: ['原接收医院承接能力不足（模拟、待核实）', '转运目的地需要同步更新', '两家候选接收确认仍待回传'],
+      action: '按接收状态、再按演示 ETA 比较联络顺序；在本页切换草案，人工确认后再返回任务下发。',
+      options: hospitalResolutionOptions(event.session, assignment, 'medical'),
     }
   }
 

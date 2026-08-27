@@ -150,11 +150,11 @@ export function ResourceDispatchPanel({
                     key={facility.id}
                     type="button"
                     aria-pressed={selected}
-                    onClick={() => onDraftChange({ ...draft, facilityId: facility.id, primaryUnitId: facility.unitId })}
+                    onClick={() => onDraftChange({ ...draft, facilityId: facility.id, primaryUnitId: facility.unitId ?? draft.primaryUnitId })}
                     className={`w-full rounded-lg border p-2 text-left ${selected ? 'border-[#0E9AA7] bg-[#EFFAFA]' : 'border-[#E8EAF0] hover:bg-[#F7F8FB]'}`}
                   >
                     <span className="block text-[10px] font-semibold text-[#34445C]">{facility.name}</span>
-                    <span className={`mt-0.5 block text-[9px] ${facility.id === 'facility-shiyi' ? 'text-[#B26A16]' : 'text-[#168177]'}`}>{facility.receivingState}</span>
+                    <span className={`mt-0.5 block text-[9px] ${facility.planningState.impacted ? 'text-[#AD3B44]' : 'text-[#168177]'}`}>{facility.receivingState}</span>
                     <span className="mt-1 block text-[8px] leading-relaxed text-[#8A94A7]">{facility.note}</span>
                   </button>
                 )

@@ -44,10 +44,19 @@ import { CURRENT_WEATHER } from '@/components/dashboard/weather/weatherCondition
 import { ROUTINE_HIGH_RISE } from '@/components/dashboard/fireModes'
 import type { MapLayerVisibility } from '@/components/dashboard/mapLayers'
 import type { RoutineHospitalTransfer } from '@/components/dashboard/dispatch/hospitalStrategyRoutes'
+import {
+  DISPATCH_FACILITIES,
+  dispatchFacilityEtaLabel,
+  dispatchFacilityPlanningState,
+  getDispatchFacility,
+  isDispatchSelectableFacilityId,
+  type DispatchFacilityId,
+} from '@/components/dashboard/dispatch/dispatchData'
 import { useCommandMapInteraction } from '@/components/dashboard/dispatch/CommandMapInteractionContext'
 import {
   CommandMedicalMapMarker,
   CommandTrafficMapMarkers,
+  type CommandMedicalRouteTarget,
   type CommandMedicalUnitMarkerDatum,
   type CommandTrafficRouteAnnotation,
   type CommandTrafficUnitMarkerDatum,
@@ -489,6 +498,7 @@ interface ScenarioPathDatum {
   kind: 'point-route' | 'road-segment' | 'detour'
   endpointLabels: [string, string]
   displayLabel?: string
+  dispatchFacilityId?: DispatchFacilityId
   roadName?: string
   roadState?: ScenarioRoadState
 }
@@ -576,6 +586,8 @@ interface Props {
   showRoadNetworkContext?: boolean
 }
 
+const EMPTY_ROUTINE_HOSPITAL_TRANSFERS: RoutineHospitalTransfer[] = []
+
 export const CityMap = memo(function CityMap({
   site,
   roads,
@@ -610,7 +622,7 @@ export const CityMap = memo(function CityMap({
   onStaticResourceSelect,
   scenarioVariant,
   routineHospitalTransfer = null,
-  routineHospitalCandidates = [],
+  routineHospitalCandidates = EMPTY_ROUTINE_HOSPITAL_TRANSFERS,
   onScenarioPointSelect,
   showRoadNetworkContext = false,
 }: Props) {
@@ -1007,7 +1019,12 @@ export const CityMap = memo(function CityMap({
     const instance = map.current
     if (!ready || !instance) return
     if (scenarioVariant === 'routine') {
-      const transferBounds = routineHospitalTransfer ? getPathBounds(routineHospitalTransfer.path) : null
+      const visibleTransfers = [routineHospitalTransfer, ...routineHospitalCandidates]
+        .filter((transfer): transfer is RoutineHospitalTransfer => Boolean(transfer))
+        .filter((transfer, index, transfers) => transfers.findIndex((candidate) => candidate.id === transfer.id) === index)
+      const transferBounds = visibleTransfers.length > 0
+        ? getPathBounds(visibleTransfers.flatMap((transfer) => transfer.path))
+        : null
       if (transferBounds) {
         stopRoutineOrbit()
         instance.resize()
@@ -1063,7 +1080,7 @@ export const CityMap = memo(function CityMap({
       },
     )
     setPitch(0)
-  }, [ready, reducedMotion, routeFitPadding, routineHospitalTransfer, scenarioConfig, scenarioFocusRevision, scenarioVariant, stopRoutineOrbit, styleRevision])
+  }, [ready, reducedMotion, routeFitPadding, routineHospitalCandidates, routineHospitalTransfer, scenarioConfig, scenarioFocusRevision, scenarioVariant, stopRoutineOrbit, styleRevision])
 
   // 只有明确进入方案阶段、切换当前方案或父级完成面板调宽后才重新聚焦。
   // 路线重算会更新 ref，但不在依赖中，封路时不会抢走用户正在查看的视口。
@@ -1545,6 +1562,23 @@ export const CityMap = memo(function CityMap({
       ) continue
 
       if (request.layer === 'routes') {
+        if (request.presetPath) {
+          if (request.presetPath.length < 2) {
+            errors.push(`${request.fromLabel} → ${request.toLabel} 的本地预置路线无效`)
+            continue
+          }
+          paths.push({
+            path: request.presetPath,
+            color: request.color,
+            layer: 'routes',
+            width: request.width,
+            kind: 'point-route',
+            endpointLabels: [request.fromLabel, request.toLabel],
+            displayLabel: request.displayLabel,
+            dispatchFacilityId: request.dispatchFacilityId,
+          })
+          continue
+        }
         let closedWayIds: ReadonlySet<string> | undefined
         if (request.avoidRoadAtLabel) {
           const avoidPoint = resolveScenarioPoint(scenarioConfig.points, request.avoidRoadAtLabel)
@@ -1589,6 +1623,7 @@ export const CityMap = memo(function CityMap({
           path: segmentPaths.flatMap((segment, index) => index === 0 ? segment.path : segment.path.slice(1)),
           endpointLabels: [request.fromLabel, request.toLabel],
           displayLabel: request.displayLabel,
+          dispatchFacilityId: request.dispatchFacilityId,
         })
         continue
       }
@@ -1650,14 +1685,13 @@ export const CityMap = memo(function CityMap({
       if (transfer.path.length < 2) continue
       paths.push({
         path: transfer.path,
-        color: transfer.id === 'facility-red-cross'
-          ? [14, 154, 167, 220]
-          : [229, 72, 77, 195],
+        color: transfer.color,
         layer: 'routes',
         width: 4.5,
         kind: 'point-route',
         endpointLabels: ['18 层演练点', transfer.name],
-        displayLabel: `转运至${transfer.name}`,
+        displayLabel: transfer.displayLabel,
+        dispatchFacilityId: transfer.id,
       })
     }
     return { paths, pending: false, errors, roadNames: [...roadNames], endpointPoints }
@@ -1675,11 +1709,10 @@ export const CityMap = memo(function CityMap({
       if (routeRole === 'medical') return '路线 C · 推荐改线 10 分钟'
     }
     if (scenarioVariant === 'medical' && executionFrame.definitionId === 'medical-panfu-transfer') {
-      if (routeRole === 'primary') return '原接收路线 · 市一医院'
-      if (routeRole === 'secondary') return '候选转运路线 · 红十字会医院'
+      return DISPATCH_FACILITIES.find((facility) => facility.route.role === routeRole)?.route.displayLabel ?? null
     }
     if (scenarioVariant === 'routine' && executionFrame.definitionId === 'legacy-hospital-route-preview' && routineHospitalTransfer) {
-      return `转运至${routineHospitalTransfer.name}`
+      return routineHospitalTransfer.displayLabel
     }
     return null
   }, [executionFrame, routineHospitalTransfer, scenarioVariant])
@@ -1791,13 +1824,29 @@ export const CityMap = memo(function CityMap({
           id: `static-route-arrow-${pathIndex}-${arrowIndex}`,
           position: pointAlongPath(path.path, progress),
           angle: routeArrowAngle(before, after),
-          color: [path.color[0], path.color[1], path.color[2], 205],
+          color: [
+            path.color[0],
+            path.color[1],
+            path.color[2],
+            activeScenarioPulsePath && path !== activeScenarioPulsePath ? 80 : 205,
+          ],
         }
       }))
-  }, [scenarioVariant, staticScenarioPaths])
+  }, [activeScenarioPulsePath, scenarioVariant, staticScenarioPaths])
   const executionRoutePaths = useMemo<Record<ExecutionRouteRole, Array<[number, number]>>>(() => {
     // 执行几何不能跟图层开关联动：隐藏车辆路线后，道路 cue 仍要能从原始求路结果取到位置。
     const scenarioRoutes = scenarioRouting.paths.filter((path) => path.layer === 'routes')
+    if (scenarioVariant === 'medical') {
+      const pathForRole = (role: ExecutionRouteRole) => {
+        const facility = DISPATCH_FACILITIES.find((candidate) => candidate.route.role === role)
+        return scenarioRoutes.find((path) => path.dispatchFacilityId === facility?.id)?.path ?? []
+      }
+      return {
+        primary: pathForRole('primary'),
+        secondary: pathForRole('secondary'),
+        medical: pathForRole('medical'),
+      }
+    }
     const transferPath = routineHospitalTransfer && routineHospitalTransfer.path.length >= 2
       ? routineHospitalTransfer.path
       : undefined
@@ -1809,7 +1858,7 @@ export const CityMap = memo(function CityMap({
     const secondary = responseRoutes[1]?.path ?? (transferPath ? primary : alternatePlan?.path ?? primary)
     const medical = transferPath ?? medicalRoute?.path ?? responseRoutes[2]?.path ?? secondary
     return { primary, secondary, medical }
-  }, [activePlan, medicalRoute, plans, routineHospitalTransfer, scenarioRouting.paths])
+  }, [activePlan, medicalRoute, plans, routineHospitalTransfer, scenarioRouting.paths, scenarioVariant])
   const executionUnits = useMemo<ExecutionUnitDatum[]>(() => {
     if (!executionFrame) return []
     const roleCounts: Partial<Record<ExecutionRouteRole, number>> = {}
@@ -1838,20 +1887,16 @@ export const CityMap = memo(function CityMap({
       status: unit.status,
     } : null
   }, [commandMapInteraction.traffic, executionUnits, scenarioVariant])
-  const commandMedicalTargetPath = useMemo(() => {
-    if ((scenarioVariant !== 'medical' && scenarioVariant !== 'routine') || !commandMapInteraction.medical) return null
-    const targetName = commandMapInteraction.medical.targetFacilityId === 'facility-red-cross'
-      ? '广州市红十字会医院'
-      : '广州市第一人民医院'
-    return scenarioPaths.find((path) => (
-      path.layer === 'routes'
-      && (scenarioVariant === 'medical'
-        ? path.displayLabel === (commandMapInteraction.medical?.targetFacilityId === 'facility-red-cross'
-          ? '候选转运路线 · 红十字会医院'
-          : '原接收路线 · 市一医院')
-        : path.displayLabel === `转运至${targetName}`)
-      && path.path.length >= 2
-    ))?.path ?? null
+  const commandMedicalTargetRoutes = useMemo<CommandMedicalRouteTarget[]>(() => {
+    if ((scenarioVariant !== 'medical' && scenarioVariant !== 'routine') || !commandMapInteraction.medical) return []
+    return commandMapInteraction.medical.targetFacilityIds.flatMap((facilityId) => {
+      const path = scenarioPaths.find((candidate) => (
+        candidate.layer === 'routes'
+        && candidate.dispatchFacilityId === facilityId
+        && candidate.path.length >= 2
+      ))?.path
+      return path ? [{ facilityId, path }] : []
+    })
   }, [commandMapInteraction.medical, scenarioPaths, scenarioVariant])
   const commandMedicalUnit = useMemo<CommandMedicalUnitMarkerDatum | null>(() => {
     if ((scenarioVariant !== 'medical' && scenarioVariant !== 'routine') || !commandMapInteraction.medical) return null
@@ -1977,19 +2022,26 @@ export const CityMap = memo(function CityMap({
   }, [executionFrame, executionRoutePaths, layers.traffic])
   const scenarioPoints = useMemo<ScenarioMapPoint[]>(() => {
     if (!scenarioConfig) return []
-    const receivingHospitalPoint: ScenarioMapPoint[] = scenarioVariant === 'routine' && routineHospitalTransfer
-      ? [{
-          position: routineHospitalTransfer.position,
-          label: routineHospitalTransfer.name,
-          kind: 'resource',
-          color: [14, 154, 167],
-          poi: 'hospital',
-          labelOffset: [12, -14],
-        }]
+    const routineTransfers = scenarioVariant === 'routine'
+      ? [routineHospitalTransfer, ...routineHospitalCandidates]
+          .filter((transfer): transfer is RoutineHospitalTransfer => Boolean(transfer))
+          .filter((transfer, index, transfers) => transfers.findIndex((candidate) => candidate.id === transfer.id) === index)
       : []
-    return [...scenarioConfig.points, ...scenarioRouting.endpointPoints, ...receivingHospitalPoint]
+    const receivingHospitalPoints: ScenarioMapPoint[] = routineTransfers.map((transfer) => ({
+          position: transfer.position,
+          label: transfer.name,
+          kind: 'resource',
+          color: [transfer.color[0], transfer.color[1], transfer.color[2]],
+          poi: 'hospital',
+          dispatchFacilityId: transfer.id,
+          labelOffset: [12, -14],
+        }))
+    const scenarioBasePoints = routineTransfers.length > 0
+      ? scenarioConfig.points.filter((point) => point.label !== '医疗参考')
+      : scenarioConfig.points
+    return [...scenarioBasePoints, ...scenarioRouting.endpointPoints, ...receivingHospitalPoints]
       .filter((point) => !point.hidden && (point.kind !== 'camera' || layers.cameras))
-  }, [scenarioConfig, scenarioRouting.endpointPoints, layers.cameras, routineHospitalTransfer, scenarioVariant])
+  }, [scenarioConfig, scenarioRouting.endpointPoints, layers.cameras, routineHospitalCandidates, routineHospitalTransfer, scenarioVariant])
   // 场景点位 → POI 徽标。resource 必须在场景配置里显式标了 poi 才画得出来；
   // 没标的宁可不画，也不要退回成一个看不出是什么的通用圆点。
   const scenarioPoiMarkers = useMemo<PoiMarkerDatum[]>(
@@ -1997,17 +2049,35 @@ export const CityMap = memo(function CityMap({
       if (commandMapInteraction.traffic && point.label === '清障车 02 当前位置（模拟）') return []
       const kind = point.poi ?? POI_KIND_BY_SCENARIO_KIND[point.kind]
       if (!kind) return []
+      const facility = getDispatchFacility(point.dispatchFacilityId)
+      const candidateFacilityId = facility && isDispatchSelectableFacilityId(facility.id)
+        ? facility.id
+        : null
+      const medicalSelect = candidateFacilityId && commandMapInteraction.medical?.enabled
+        ? () => commandMapInteraction.medical?.onDrop({
+            facilityId: candidateFacilityId,
+            routeProgress: facility?.route.defaultProgress ?? 0.3,
+          })
+        : undefined
       return [{
         id: `scenario-${index}-${point.label}`,
         position: point.position,
         kind,
         label: point.label,
-        confidence: POI_CONFIDENCE_BY_SCENARIO_KIND[point.kind] ?? 'confirmed',
+        meta: facility ? `${facility.receivingState} · ${dispatchFacilityEtaLabel(facility)}` : undefined,
+        confidence: facility?.id === 'facility-medical-reference'
+          ? 'unverified'
+          : POI_CONFIDENCE_BY_SCENARIO_KIND[point.kind] ?? 'confirmed',
         alarm: point.kind === 'event',
-        onSelect: onScenarioPointSelect ? () => onScenarioPointSelect(point) : undefined,
+        role: facility ? 'facility' : undefined,
+        planningState: facility ? dispatchFacilityPlanningState(facility) : undefined,
+        selected: facility ? commandMapInteraction.medical?.selectedFacilityId === facility.id : false,
+        onSelect: facility
+          ? medicalSelect
+          : onScenarioPointSelect ? () => onScenarioPointSelect(point) : undefined,
       }]
     }),
-    [commandMapInteraction.traffic, onScenarioPointSelect, scenarioPoints],
+    [commandMapInteraction.medical, commandMapInteraction.traffic, onScenarioPointSelect, scenarioPoints],
   )
 
   // 荔湾主链路（非场景态）的 POI。这里的消防站与医院来自公开 OSM POI，标为已确认；
@@ -2262,11 +2332,15 @@ export const CityMap = memo(function CityMap({
             data: staticScenarioPaths,
             getPath: (path) => path.path,
             getColor: (path) => activeScenarioPulsePath && path.layer === 'routes'
-              ? [path.color[0], path.color[1], path.color[2], 145]
+              ? path === activeScenarioPulsePath
+                ? [path.color[0], path.color[1], path.color[2], 245]
+                : [path.color[0], path.color[1], path.color[2], 105]
               : path.color,
             getWidth: (path) => path.layer === 'traffic'
               ? path.roadState === 'blocked' ? BLOCKED_ROAD_WIDTH_PX : ROAD_STATUS_WIDTH_PX
-              : activeScenarioPulsePath ? Math.max(1.7, path.width * 0.48) : path.width,
+              : activeScenarioPulsePath
+                ? path === activeScenarioPulsePath ? Math.max(5.2, path.width * 1.15) : Math.max(1.5, path.width * 0.4)
+                : path.width,
             widthUnits: 'pixels',
             getDashArray: (path) => path.roadState === 'blocked' ? [1.4, 1] : [1, 0],
             dashJustified: false,
@@ -2772,6 +2846,10 @@ export const CityMap = memo(function CityMap({
       executionCameraKey.current = null
       return
     }
+    if (commandMapInteraction.medical) {
+      executionCameraKey.current = null
+      return
+    }
     const key = `${executionFrame.definitionId}:${executionFrame.phase}`
     if (executionCameraKey.current === key) return
     executionCameraKey.current = key
@@ -2796,7 +2874,7 @@ export const CityMap = memo(function CityMap({
       bearing: 0,
       duration: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 520,
     })
-  }, [executionFrame, executionRoutePaths, executionUnits, ready, scenarioConfig])
+  }, [commandMapInteraction.medical, executionFrame, executionRoutePaths, executionUnits, ready, scenarioConfig])
 
   // routine 的楼体动画直接驱动 MapLibre。镜头方位与烟气 paint 值都只存在
   // 于地图实例/rAF 闭包中，不进入 React state，避免整张看板逐帧重渲染。
@@ -2930,6 +3008,7 @@ export const CityMap = memo(function CityMap({
       data-command-route-label-count={commandTrafficRoutes.length}
       data-traffic-drag-enabled={commandMapInteraction.traffic?.enabled ? 'true' : 'false'}
       data-medical-drag-enabled={commandMapInteraction.medical?.enabled ? 'true' : 'false'}
+      data-medical-drag-target-count={commandMedicalTargetRoutes.length}
       data-active-scenario-route={activeScenarioRouteLabel ?? ''}
       data-scenario-route-errors={scenarioRouting.errors.length}
       data-scenario-route-pending={scenarioRouting.pending ? 'true' : 'false'}
@@ -3003,7 +3082,7 @@ export const CityMap = memo(function CityMap({
       {commandMapInteraction.medical && (
         <CommandMedicalMapMarker
           map={ready ? map.current : null}
-          targetPath={commandMedicalTargetPath}
+          targetRoutes={commandMedicalTargetRoutes}
           unit={commandMedicalUnit}
           interaction={commandMapInteraction.medical}
         />

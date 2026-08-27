@@ -4,6 +4,8 @@ import { ROUTINE_HIGH_RISE } from './fireModes'
 import type { MapLayerVisibility } from './mapLayers'
 import type { PoiKind } from './map/poiCatalog'
 import { OriginMark } from './Provenance'
+import { DISPATCH_FACILITIES, type DispatchFacilityId } from './dispatch/dispatchData'
+import { getPanfuHospitalPath, PANFU_MEDICAL_INCIDENT } from './dispatch/hospitalStrategyRoutes'
 
 export type ScenarioMapVariant = 'routine' | 'police' | 'medical' | 'traffic' | 'urban_order' | 'major'
 
@@ -24,6 +26,8 @@ export interface ScenarioMapPoint {
    * 只有 resource 必须显式标注，其余按 kind 兜底，见 map/poiCatalog.ts。
    */
   poi?: PoiKind
+  /** 调度医院点位使用稳定 ID 绑定路线、ETA 与人工选择，避免靠文案反查。 */
+  dispatchFacilityId?: DispatchFacilityId
   /** 仅作为路网求路经由点，不在地图上绘制 POI。 */
   hidden?: boolean
 }
@@ -39,6 +43,10 @@ export interface ScenarioPointRouteRequest {
   avoidRoadAtLabel?: string
   /** 路线图例与诊断使用的人类可读名称。 */
   displayLabel?: string
+  /** 医疗转运路线与医院的一一对应键。 */
+  dispatchFacilityId?: DispatchFacilityId
+  /** 本地 OSM 快照预生成几何；存在时直接使用，不在页面运行期重新求路。 */
+  presetPath?: Array<[number, number]>
   color: [number, number, number, number]
   layer: 'routes'
   width: number
@@ -170,33 +178,34 @@ export const SCENARIO_MAP_CONFIGS: Record<ScenarioMapVariant, ScenarioMapConfig>
     zoom: 13.85,
     areas: [],
     points: [
-      { position: [113.2568, 23.1265], label: '盘福路急救点（模拟）', kind: 'event', color: RED, poi: 'medical', labelOffset: [14, -18] },
-      { position: [113.2511865, 23.133973], label: '广州市第一人民医院', kind: 'resource', color: RED, poi: 'hospital', labelOffset: [-12, -12] },
-      { position: [113.2571165, 23.1072521], label: '广州市红十字会医院', kind: 'resource', color: GREEN, poi: 'hospital', labelOffset: [12, 14] },
+      { position: PANFU_MEDICAL_INCIDENT.position, label: PANFU_MEDICAL_INCIDENT.label, kind: 'event', color: RED, poi: 'medical', labelOffset: [14, -18] },
+      ...DISPATCH_FACILITIES.map((facility, index): ScenarioMapPoint => ({
+        position: facility.position,
+        label: facility.name,
+        kind: 'resource',
+        color: [facility.route.color[0], facility.route.color[1], facility.route.color[2]],
+        poi: 'hospital',
+        dispatchFacilityId: facility.id,
+        labelOffset: index === 0 ? [12, 14] : index === 1 ? [12, 14] : [-12, -12],
+      })),
       { position: [113.2554, 23.1261], label: '工作人员输入', kind: 'source', color: AMBER, labelOffset: [-12, 14] },
       { position: [113.2578, 23.1276], label: '演示事件流', kind: 'source', color: AMBER, labelOffset: [12, -12] },
       { position: [113.2538, 23.1278], label: '北侧上游点位', kind: 'camera', color: VIOLET, labelOffset: [-12, -14] },
       { position: [113.2592, 23.1286], label: '东侧上游点位', kind: 'camera', color: VIOLET, labelOffset: [12, -14] },
     ],
     routes: [
-      {
-        fromLabel: '盘福路急救点（模拟）',
-        toLabel: '广州市第一人民医院',
-        displayLabel: '原接收路线 · 市一医院',
-        color: [229, 72, 77, 190],
+      ...DISPATCH_FACILITIES.map((facility): ScenarioPointRouteRequest => ({
+        fromLabel: PANFU_MEDICAL_INCIDENT.label,
+        toLabel: facility.name,
+        displayLabel: facility.route.displayLabel,
+        dispatchFacilityId: facility.id,
+        presetPath: getPanfuHospitalPath(facility.id),
+        color: facility.route.color,
         layer: 'routes',
-        width: 4,
-      },
+        width: facility.planningState.impacted ? 4 : 4.5,
+      })),
       {
-        fromLabel: '盘福路急救点（模拟）',
-        toLabel: '广州市红十字会医院',
-        displayLabel: '候选转运路线 · 红十字会医院',
-        color: [14, 154, 167, 220],
-        layer: 'routes',
-        width: 4,
-      },
-      {
-        eventLabel: '盘福路急救点（模拟）',
+        eventLabel: PANFU_MEDICAL_INCIDENT.label,
         color: [199, 120, 22, 175],
         layer: 'traffic',
         state: 'attention',

@@ -1,4 +1,5 @@
 import { createContext, useContext } from 'react'
+import type { DispatchFacilityId, DispatchSelectableFacilityId } from './dispatchData'
 
 export interface CommandTrafficRouteDrop {
   routeId: 'C'
@@ -12,17 +13,19 @@ export interface CommandTrafficDragInteraction {
   onDrop: (drop: CommandTrafficRouteDrop) => void
 }
 
-export type CommandMedicalFacilityId = 'facility-shiyi' | 'facility-red-cross'
+export type CommandMedicalFacilityId = DispatchFacilityId
+export type CommandMedicalCandidateFacilityId = DispatchSelectableFacilityId
 
 export interface CommandMedicalRouteDrop {
-  facilityId: CommandMedicalFacilityId
+  facilityId: CommandMedicalCandidateFacilityId
   routeProgress: number
 }
 
 export interface CommandMedicalDragInteraction {
   enabled: boolean
   selectedFacilityId: CommandMedicalFacilityId
-  targetFacilityId: CommandMedicalFacilityId
+  targetFacilityIds: CommandMedicalCandidateFacilityId[]
+  markerStatusLabel: string
   onDrop: (drop: CommandMedicalRouteDrop) => void
 }
 

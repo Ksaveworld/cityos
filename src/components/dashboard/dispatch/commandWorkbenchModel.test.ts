@@ -5,6 +5,49 @@ import {
   commandWorkbenchReducer,
   createInitialCommandWorkbenchState,
 } from './commandWorkbenchModel.ts'
+import {
+  DISPATCH_FACILITIES,
+  getSelectableDispatchFacilities,
+  rankDispatchFacilitiesForContact,
+  resolveDispatchFacilityByOptionId,
+} from './dispatchData.ts'
+import { createRoutineHospitalTransfer, getPanfuHospitalPath } from './hospitalStrategyRoutes.ts'
+
+test('medical transfer fixture exposes one impacted baseline and two selectable candidates', () => {
+  const impacted = DISPATCH_FACILITIES.filter((facility) => facility.planningState.impacted)
+  const candidates = getSelectableDispatchFacilities()
+
+  assert.equal(DISPATCH_FACILITIES.length, 3)
+  assert.equal(impacted.length, 1)
+  assert.equal(impacted[0].id, 'facility-medical-reference')
+  assert.equal(impacted[0].selectable, false)
+  assert.deepEqual(impacted[0].resolutionOptionIds, { fire: null, medical: null })
+  assert.deepEqual(candidates.map((facility) => [facility.id, facility.etaMinutes]), [
+    ['facility-red-cross', 6],
+    ['facility-shiyi', 10],
+  ])
+  assert.deepEqual(rankDispatchFacilitiesForContact().map((facility) => facility.id), [
+    'facility-red-cross',
+    'facility-shiyi',
+  ])
+  assert.ok(DISPATCH_FACILITIES.every((facility) => !facility.receivingState.includes('已确认接收')))
+
+  for (const facility of DISPATCH_FACILITIES) {
+    const path = getPanfuHospitalPath(facility.id)
+    assert.deepEqual(path[0], [113.2568, 23.1265])
+    assert.deepEqual(path[path.length - 1], facility.position)
+    const routineTransfer = createRoutineHospitalTransfer(facility)
+    assert.deepEqual(routineTransfer?.path[0], [113.25329, 23.11391])
+    assert.deepEqual(routineTransfer?.path.at(-1), facility.position)
+  }
+  const candidateOptionIds = candidates.flatMap((facility) => Object.values(facility.resolutionOptionIds))
+  assert.equal(new Set(candidateOptionIds).size, 4)
+  for (const facility of candidates) {
+    for (const optionId of Object.values(facility.resolutionOptionIds)) {
+      assert.equal(resolveDispatchFacilityByOptionId(optionId ?? '')?.id, facility.id)
+    }
+  }
+})
 
 test('dragging the traffic unit switches the map preview before recalculation invalidates v1', () => {
   const initial = createInitialCommandWorkbenchState()
@@ -67,13 +110,18 @@ test('traffic route C preview is immediate but the replacement task still requir
 
 test('dragging AMB-02 switches the medical map preview before recalculation invalidates v1', () => {
   let state = createInitialCommandWorkbenchState()
+  assert.equal(state.medical.selectedFacilityId, 'facility-medical-reference')
   state = commandWorkbenchReducer(state, { type: 'medical/tick', delta: 1 })
   assert.ok(
     Math.abs(state.medical.ambulanceProgress - 0.1950485337) < 1e-10,
     'ambulance waits at the safe decision point on the original hospital route',
   )
 
-  state = commandWorkbenchReducer(state, { type: 'medical/drop-reroute', routeProgress: 0.41 })
+  state = commandWorkbenchReducer(state, {
+    type: 'medical/select-facility',
+    facilityId: 'facility-red-cross',
+    routeProgress: 0.41,
+  })
 
   assert.equal(state.medical.phase, 'recalculating')
   assert.equal(state.medical.selectedFacilityId, 'facility-red-cross')
@@ -96,9 +144,58 @@ test('dragging AMB-02 switches the medical map preview before recalculation inva
   assert.deepEqual(state.medical.previousTask, { version: 1, status: 'invalidated' })
 })
 
+test('medical candidates can be switched repeatedly before approval without creating extra plan versions', () => {
+  let state = createInitialCommandWorkbenchState()
+  state = commandWorkbenchReducer(state, {
+    type: 'medical/select-facility',
+    facilityId: 'facility-red-cross',
+    routeProgress: 0.41,
+  })
+  state = commandWorkbenchReducer(state, {
+    type: 'medical/select-facility',
+    facilityId: 'facility-shiyi',
+    routeProgress: 0.3,
+  })
+  assert.equal(state.medical.phase, 'recalculating')
+  assert.equal(state.medical.selectedFacilityId, 'facility-shiyi')
+  assert.equal(state.medical.planVersion, 1)
+
+  state = commandWorkbenchReducer(state, { type: 'medical/recalculation-complete' })
+  assert.equal(state.medical.phase, 'awaiting-approval')
+  assert.equal(state.medical.planVersion, 2)
+  assert.deepEqual(state.medical.previousTask, { version: 1, status: 'invalidated' })
+
+  state = commandWorkbenchReducer(state, {
+    type: 'medical/select-facility',
+    facilityId: 'facility-red-cross',
+    routeProgress: 0.36,
+  })
+  state = commandWorkbenchReducer(state, { type: 'medical/recalculation-complete' })
+  assert.equal(state.medical.phase, 'awaiting-approval')
+  assert.equal(state.medical.selectedFacilityId, 'facility-red-cross')
+  assert.equal(state.medical.planVersion, 2)
+  assert.equal(state.medical.approvedVersion, null)
+  assert.equal(state.medical.taskVersion, 1)
+  assert.equal(state.medical.taskStatus, 'invalidated')
+  assert.deepEqual(state.medical.previousTask, { version: 1, status: 'invalidated' })
+
+  state = commandWorkbenchReducer(state, { type: 'medical/approve' })
+  const approved = state
+  state = commandWorkbenchReducer(state, {
+    type: 'medical/select-facility',
+    facilityId: 'facility-shiyi',
+    routeProgress: 0.3,
+  })
+  assert.strictEqual(state, approved, 'approval freezes hospital selection until the workflow is reset')
+})
+
 test('medical route preview is immediate but the replacement task still requires approval and delivery', () => {
   let state = createInitialCommandWorkbenchState()
-  state = commandWorkbenchReducer(state, { type: 'medical/drop-reroute', routeProgress: 0.41 })
+  state = commandWorkbenchReducer(state, {
+    type: 'medical/select-facility',
+    facilityId: 'facility-red-cross',
+    routeProgress: 0.41,
+  })
   state = commandWorkbenchReducer(state, { type: 'medical/recalculation-complete' })
   state = commandWorkbenchReducer(state, { type: 'medical/approve' })
   assert.equal(state.medical.phase, 'approved')

@@ -4,10 +4,16 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { ExecutionFrame } from '../execution/executionPlayback'
 import {
   type CommandMapInteractionValue,
+  type CommandMedicalCandidateFacilityId,
   type CommandMedicalFacilityId,
 } from './CommandMapInteractionContext'
 import { CommandMapInteractionProvider } from './CommandMapInteractionProvider'
 import type { ActiveDispatchEvent } from './activeEventDispatchModel'
+import {
+  dispatchFacilityEtaLabel,
+  getDispatchFacility,
+  getSelectableDispatchFacilities,
+} from './dispatchData'
 
 import './CommandWorkbench.css'
 
@@ -15,7 +21,7 @@ interface LegacyDispatchWorkbenchProps {
   event: ActiveDispatchEvent
   selectedFacilityId: CommandMedicalFacilityId
   advisorRequestId?: string | null
-  onSelectFacility: (facilityId: CommandMedicalFacilityId) => void
+  onSelectFacility: (facilityId: CommandMedicalCandidateFacilityId) => void
   renderMap: (executionFrame: ExecutionFrame) => ReactNode
   contextPanel: ReactNode
   advisorPanel: ReactNode
@@ -30,11 +36,12 @@ export function LegacyDispatchWorkbench({
   contextPanel,
   advisorPanel,
 }: LegacyDispatchWorkbenchProps) {
-  const [routeProgress, setRouteProgress] = useState(0.3)
+  const [dragPreview, setDragPreview] = useState<{ facilityId: CommandMedicalCandidateFacilityId; routeProgress: number } | null>(null)
   const [advisorOpen, setAdvisorOpen] = useState(false)
-  const targetFacilityId: CommandMedicalFacilityId = selectedFacilityId === 'facility-shiyi'
-    ? 'facility-red-cross'
-    : 'facility-shiyi'
+  const selectedFacility = getDispatchFacility(selectedFacilityId)
+  const routeProgress = dragPreview?.facilityId === selectedFacilityId
+    ? dragPreview.routeProgress
+    : selectedFacility?.route.defaultProgress ?? 0.3
 
   useEffect(() => {
     if (advisorRequestId) setAdvisorOpen(true)
@@ -45,13 +52,16 @@ export function LegacyDispatchWorkbench({
     medical: {
       enabled: true,
       selectedFacilityId,
-      targetFacilityId,
+      targetFacilityIds: getSelectableDispatchFacilities()
+        .filter((facility) => facility.id !== selectedFacilityId)
+        .map((facility) => facility.id),
+      markerStatusLabel: '预览 · 未下发',
       onDrop: ({ facilityId, routeProgress: nextProgress }) => {
-        setRouteProgress(nextProgress)
+        setDragPreview({ facilityId, routeProgress: nextProgress })
         onSelectFacility(facilityId)
       },
     },
-  }), [onSelectFacility, selectedFacilityId, targetFacilityId])
+  }), [onSelectFacility, selectedFacilityId])
 
   const executionFrame = useMemo<ExecutionFrame>(() => ({
     definitionId: 'legacy-hospital-route-preview',
@@ -66,20 +76,17 @@ export function LegacyDispatchWorkbench({
       departAt: 0,
       arriveAt: 1,
       progress: routeProgress,
-      status: 'enroute',
+      status: 'waiting',
     }],
     intersections: [],
     roadCues: [],
     tasks: [],
     visibleAlerts: [],
     onsiteNodes: [],
-    incidentStage: '协同在途',
+    incidentStage: '待出发',
     blockingAlert: null,
   }), [routeProgress])
 
-  const selectedFacilityLabel = selectedFacilityId === 'facility-red-cross'
-    ? '红十字会医院'
-    : '市一医院'
   return (
     <main className="command-workbench" data-testid="legacy-dispatch-workbench">
       <section className="command-map-panel" aria-label={`${event.title}地图预览`}>
@@ -103,8 +110,10 @@ export function LegacyDispatchWorkbench({
           <div className="command-drag-guide is-medical is-preview" aria-live="polite">
             <span><Route size={15} /></span>
             <div>
-              <strong>当前预览：{selectedFacilityLabel}</strong>
-              <small>拖动救护车至静态候选路线即可改道；预览不会自动确认或下发。</small>
+              <strong>当前预览：{selectedFacility?.name ?? '接收医院待选择'}</strong>
+              <small>{selectedFacility
+                ? `${selectedFacility.receivingState} · ${dispatchFacilityEtaLabel(selectedFacility)}；可继续点击或拖拽切换，预览不会自动确认或下发。`
+                : '拖动救护车至静态候选路线即可改道；预览不会自动确认或下发。'}</small>
             </div>
           </div>
 

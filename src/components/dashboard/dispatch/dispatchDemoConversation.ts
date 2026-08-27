@@ -61,12 +61,12 @@ function comparisonEvidence(analysis: DispatchOptionAnalysis) {
       sourceIds: ['dispatch-candidate-state'],
     })
   }
-  if (analysis.distanceReason) {
+  if (analysis.etaReason) {
     evidence.push({
-      label: '静态点位距离比较',
-      value: analysis.distanceReason,
-      kind: 'inference',
-      sourceIds: ['dispatch-event-position', 'dispatch-facility-poi'],
+      label: '演示 ETA 联络顺序',
+      value: analysis.etaReason,
+      kind: 'simulated',
+      sourceIds: ['dispatch-facility-eta-demo'],
     })
   }
   return evidence
@@ -75,8 +75,7 @@ function comparisonEvidence(analysis: DispatchOptionAnalysis) {
 function comparisonSources() {
   return [
     { id: 'dispatch-candidate-state', label: '当前候选接收状态（场景台账）' },
-    { id: 'dispatch-event-position', label: '当前事件点位（场景台账）' },
-    { id: 'dispatch-facility-poi', label: '医院公开静态点位' },
+    { id: 'dispatch-facility-eta-demo', label: '候选医院 ETA（演示估算）' },
   ]
 }
 

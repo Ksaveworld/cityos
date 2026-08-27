@@ -1,3 +1,9 @@
+import {
+  isDispatchSelectableFacilityId,
+  type DispatchFacilityId,
+  type DispatchSelectableFacilityId,
+} from './dispatchData.ts'
+
 export type CommandScenarioId = 'traffic' | 'medical' | 'city-order' | 'fire' | 'police' | 'major' | 'generic'
 
 export type CommandPhase =
@@ -49,7 +55,7 @@ export interface MedicalCommandState {
   ambulanceProgress: number
   planVersion: number
   approvedVersion: number | null
-  selectedFacilityId: 'facility-shiyi' | 'facility-red-cross'
+  selectedFacilityId: DispatchFacilityId
   taskVersion: number | null
   taskStatus: CommandTaskStatus
   previousTask: PreviousCommandTask | null
@@ -78,7 +84,7 @@ export type CommandWorkbenchAction =
   | { type: 'traffic/acknowledge' }
   | { type: 'traffic/start-execution' }
   | { type: 'traffic/reset' }
-  | { type: 'medical/drop-reroute'; routeProgress: number }
+  | { type: 'medical/select-facility'; facilityId: DispatchSelectableFacilityId; routeProgress: number }
   | { type: 'medical/recalculation-complete' }
   | { type: 'medical/approve' }
   | { type: 'medical/issue' }
@@ -113,7 +119,7 @@ const INITIAL_MEDICAL_STATE: MedicalCommandState = {
   ambulanceProgress: 0.08,
   planVersion: 1,
   approvedVersion: 1,
-  selectedFacilityId: 'facility-shiyi',
+  selectedFacilityId: 'facility-medical-reference',
   taskVersion: 1,
   taskStatus: 'en-route',
   previousTask: null,
@@ -243,17 +249,20 @@ export function commandWorkbenchReducer(
       }
     case 'traffic/reset':
       return { ...state, traffic: { ...INITIAL_TRAFFIC_STATE } }
-    case 'medical/drop-reroute':
-      if (state.medical.phase !== 'blocked' || state.medical.selectedFacilityId !== 'facility-shiyi') return state
+    case 'medical/select-facility': {
+      const editable = ['blocked', 'recalculating', 'awaiting-approval'].includes(state.medical.phase)
+      if (!editable || !isDispatchSelectableFacilityId(action.facilityId)) return state
+      if (state.medical.selectedFacilityId === action.facilityId) return state
       return {
         ...state,
         medical: {
           ...state.medical,
           phase: 'recalculating',
-          selectedFacilityId: 'facility-red-cross',
+          selectedFacilityId: action.facilityId,
           ambulanceProgress: Math.max(0.05, Math.min(0.95, action.routeProgress)),
         },
       }
+    }
     case 'medical/recalculation-complete':
       if (state.medical.phase !== 'recalculating') return state
       return {
@@ -261,10 +270,12 @@ export function commandWorkbenchReducer(
         medical: {
           ...state.medical,
           phase: 'awaiting-approval',
-          planVersion: 2,
+          planVersion: state.medical.approvedVersion === state.medical.planVersion
+            ? state.medical.planVersion + 1
+            : state.medical.planVersion,
           approvedVersion: null,
           taskStatus: 'invalidated',
-          previousTask: {
+          previousTask: state.medical.previousTask ?? {
             version: state.medical.taskVersion ?? state.medical.planVersion,
             status: 'invalidated',
           },

@@ -6,6 +6,7 @@ import type {
   CommandMedicalDragInteraction,
   CommandTrafficDragInteraction,
 } from './CommandMapInteractionContext'
+import { isDispatchSelectableFacilityId, type DispatchSelectableFacilityId } from './dispatchData'
 import { nearestRouteSnap } from './routeSnap'
 
 export interface CommandTrafficRouteAnnotation {
@@ -27,6 +28,11 @@ export interface CommandTrafficUnitMarkerDatum {
 }
 
 export type CommandMedicalUnitMarkerDatum = CommandTrafficUnitMarkerDatum
+
+export interface CommandMedicalRouteTarget {
+  facilityId: DispatchSelectableFacilityId
+  path: Array<[number, number]>
+}
 
 const DROP_TOLERANCE_PX = 48
 
@@ -62,12 +68,12 @@ export const CommandTrafficMapMarkers = memo(function CommandTrafficMapMarkers({
 
 export const CommandMedicalMapMarker = memo(function CommandMedicalMapMarker({
   map,
-  targetPath,
+  targetRoutes,
   unit,
   interaction,
 }: {
   map: MapLibreMap | null
-  targetPath: Array<[number, number]> | null
+  targetRoutes: CommandMedicalRouteTarget[]
   unit: CommandMedicalUnitMarkerDatum | null
   interaction: CommandMedicalDragInteraction
 }) {
@@ -79,17 +85,18 @@ export const CommandMedicalMapMarker = memo(function CommandMedicalMapMarker({
     <DraggableUnitMarker
       map={map}
       unit={unit}
-      targetPath={targetPath}
+      targetRoutes={targetRoutes.map((target) => ({ id: target.facilityId, path: target.path }))}
       enabled={interaction.enabled}
       kind="medical"
       testId="draggable-medical-unit"
       dragHint="拖拽改道"
-      compactHint="预览 · 未下发"
+      compactHint={interaction.markerStatusLabel}
       keyboardInstruction="拖动到任一静态候选路线即可改道；键盘按回车可生成同一换院预览"
-      onDrop={(routeProgress) => interaction.onDrop({
-        facilityId: interaction.targetFacilityId,
-        routeProgress,
-      })}
+      disabledInstruction={interaction.markerStatusLabel}
+      onDrop={(facilityId, routeProgress) => {
+        if (!isDispatchSelectableFacilityId(facilityId)) return
+        interaction.onDrop({ facilityId, routeProgress })
+      }}
     />
   )
 })
@@ -167,14 +174,14 @@ function TrafficUnitMarker({
     <DraggableUnitMarker
       map={map}
       unit={unit}
-      targetPath={targetRoute?.path ?? null}
+      targetRoutes={targetRoute ? [{ id: targetRoute.routeId, path: targetRoute.path }] : []}
       enabled={interaction.enabled}
       kind="traffic"
       testId="draggable-traffic-unit"
       dragHint="拖到绿色 C 路线"
       compactHint="预览 · 未下发"
       keyboardInstruction="按住拖动到绿色路线 C；键盘按回车可生成同一改线预览"
-      onDrop={(routeProgress) => interaction.onDrop({ routeId: 'C', routeProgress })}
+      onDrop={(_routeId, routeProgress) => interaction.onDrop({ routeId: 'C', routeProgress })}
     />
   )
 }
@@ -182,25 +189,27 @@ function TrafficUnitMarker({
 function DraggableUnitMarker({
   map,
   unit,
-  targetPath,
+  targetRoutes,
   enabled,
   kind,
   testId,
   dragHint,
   compactHint,
   keyboardInstruction,
+  disabledInstruction,
   onDrop,
 }: {
   map: MapLibreMap
   unit: CommandTrafficUnitMarkerDatum
-  targetPath: Array<[number, number]> | null
+  targetRoutes: Array<{ id: string; path: Array<[number, number]> }>
   enabled: boolean
   kind: 'traffic' | 'medical'
   testId: string
   dragHint: string
   compactHint: string
   keyboardInstruction: string
-  onDrop: (routeProgress: number) => void
+  disabledInstruction?: string
+  onDrop: (targetId: string, routeProgress: number) => void
 }) {
   const element = useMemo(() => {
     const host = document.createElement('div')
@@ -212,11 +221,11 @@ function DraggableUnitMarker({
   const markerRef = useRef<Marker | null>(null)
   const draggingRef = useRef(false)
   const positionRef = useRef(unit.position)
-  const targetPathRef = useRef(targetPath)
+  const targetRoutesRef = useRef(targetRoutes)
   const enabledRef = useRef(enabled)
   const onDropRef = useRef(onDrop)
   positionRef.current = unit.position
-  targetPathRef.current = targetPath
+  targetRoutesRef.current = targetRoutes
   enabledRef.current = enabled
   onDropRef.current = onDrop
 
@@ -228,15 +237,20 @@ function DraggableUnitMarker({
     let restoreDragPan = false
 
     const updateDropState = () => {
-      const path = targetPathRef.current
-      if (!path) {
+      const routes = targetRoutesRef.current
+      if (routes.length === 0) {
         element.dataset.validDrop = 'false'
         return null
       }
       const lngLat = marker.getLngLat()
-      const snap = nearestRouteSnap((coordinate) => map.project(coordinate), [lngLat.lng, lngLat.lat], path)
-      element.dataset.validDrop = snap.distancePixels <= DROP_TOLERANCE_PX ? 'true' : 'false'
-      return snap
+      const nearest = routes
+        .map((target) => ({
+          target,
+          snap: nearestRouteSnap((coordinate) => map.project(coordinate), [lngLat.lng, lngLat.lat], target.path),
+        }))
+        .sort((left, right) => left.snap.distancePixels - right.snap.distancePixels)[0] ?? null
+      element.dataset.validDrop = nearest && nearest.snap.distancePixels <= DROP_TOLERANCE_PX ? 'true' : 'false'
+      return nearest
     }
     const handleDragStart = () => {
       draggingRef.current = true
@@ -254,9 +268,9 @@ function DraggableUnitMarker({
       if (restoreDragPan) map.dragPan.enable()
       restoreDragPan = false
 
-      if (snap && snap.distancePixels <= DROP_TOLERANCE_PX && enabledRef.current) {
-        marker.setLngLat(snap.position)
-        onDropRef.current(snap.progress)
+      if (snap && snap.snap.distancePixels <= DROP_TOLERANCE_PX && enabledRef.current) {
+        marker.setLngLat(snap.snap.position)
+        onDropRef.current(snap.target.id, snap.snap.progress)
       } else {
         marker.setLngLat(positionRef.current)
       }
@@ -285,9 +299,10 @@ function DraggableUnitMarker({
   }, [unit.position])
 
   const handleKeyboardRouteChange = () => {
-    if (!enabled || !targetPath) return
-    const routeProgress = Math.max(0.3, nearestRouteSnap((coordinate) => map.project(coordinate), unit.position, targetPath).progress)
-    onDrop(routeProgress)
+    const target = targetRoutes[0]
+    if (!enabled || !target) return
+    const routeProgress = Math.max(0.3, nearestRouteSnap((coordinate) => map.project(coordinate), unit.position, target.path).progress)
+    onDrop(target.id, routeProgress)
   }
 
   return createPortal(
@@ -298,7 +313,7 @@ function DraggableUnitMarker({
       data-status={unit.status}
       role="button"
       tabIndex={enabled ? 0 : -1}
-      aria-label={`${unit.label}，${enabled ? keyboardInstruction : '当前路线调整预览'}`}
+      aria-label={`${unit.label}，${enabled ? keyboardInstruction : disabledInstruction ?? compactHint}`}
       onKeyDown={(event) => {
         if (event.key !== 'Enter' && event.key !== ' ') return
         event.preventDefault()

@@ -1,5 +1,6 @@
 import {
   memo,
+  useCallback,
   useEffect,
   useMemo,
   useReducer,
@@ -35,7 +36,19 @@ import {
 } from 'lucide-react'
 
 import { CommandTacticalMap } from './CommandTacticalMap'
+import type { CommandMedicalRouteDrop } from './CommandMapInteractionContext'
 import type { ExecutionFrame } from '@/components/dashboard/execution/executionPlayback'
+import {
+  DISPATCH_FACILITIES,
+  dispatchCandidateReceivingStateSummary,
+  dispatchFacilityEtaLabel,
+  getDispatchFacility,
+  getSelectableDispatchFacilities,
+  isDispatchSelectableFacilityId,
+  rankDispatchFacilitiesForContact,
+  type DispatchFacilityId,
+  type DispatchSelectableFacilityId,
+} from './dispatchData'
 import {
   COMMAND_SCENARIOS,
   commandScenarioForEvent,
@@ -116,6 +129,8 @@ export const CommandWorkbench = memo(function CommandWorkbench({ event, renderMa
     color: '#6B7280',
     priority: 'P1' as const,
   }
+  const selectedMedicalFacility = getDispatchFacility(state.medical.selectedFacilityId)
+    ?? DISPATCH_FACILITIES[0]
   const activePhase: CommandPhase | null = scenario === 'traffic'
     ? state.traffic.phase
     : scenario === 'medical'
@@ -147,13 +162,13 @@ export const CommandWorkbench = memo(function CommandWorkbench({ event, renderMa
         id: 'medical-panfu-transfer',
         label: '救护车 AMB-02',
         kind: 'medical',
-        routeRole: state.medical.selectedFacilityId === 'facility-red-cross' ? 'secondary' : 'primary',
+        routeRole: selectedMedicalFacility.route.role,
         progress: state.medical.ambulanceProgress,
         phase: state.medical.phase,
       })
     }
     return null
-  }, [scenario, state.medical, state.traffic])
+  }, [scenario, selectedMedicalFacility.route.role, state.medical, state.traffic])
 
   useEffect(() => {
     const media = window.matchMedia('(prefers-reduced-motion: reduce)')
@@ -213,7 +228,7 @@ export const CommandWorkbench = memo(function CommandWorkbench({ event, renderMa
     }, reducedMotion ? 60 : 90)
 
     return () => window.clearInterval(timer)
-  }, [reducedMotion, state.medical.phase])
+  }, [reducedMotion, state.medical.phase, state.medical.selectedFacilityId])
 
   const liveMessage = useMemo(() => {
     if (scenario === 'traffic') {
@@ -226,14 +241,14 @@ export const CommandWorkbench = memo(function CommandWorkbench({ event, renderMa
     }
     if (scenario === 'medical') {
       const medical = state.medical
-      if (medical.phase === 'recalculating') return '救护车已绑定红十字会医院路线，正在重算新转运方案。'
-      if (medical.phase === 'awaiting-approval') return '医疗方案 v2 已生成，地图预览已切换，需要重新人工批准。'
+      if (medical.phase === 'recalculating') return `救护车已绑定${selectedMedicalFacility.name}路线，正在重算新转运方案。`
+      if (medical.phase === 'awaiting-approval') return `医疗方案 v${medical.planVersion} 已生成，当前预览为${selectedMedicalFacility.name}，需要人工批准。`
       if (medical.phase === 'acknowledged') return '新转运任务已模拟签收，等待指挥员开始执行。'
-      if (medical.phase === 'en-route') return '新转运任务开始执行，救护车沿新路线移动。'
-      if (medical.phase === 'arrived') return '救护车已模拟抵达新接收点。'
+      if (medical.phase === 'en-route') return `新转运任务开始执行，救护车沿${selectedMedicalFacility.name}路线移动。`
+      if (medical.phase === 'arrived') return `救护车已模拟抵达${selectedMedicalFacility.name}。`
     }
     return '调度工作台已切换场景。'
-  }, [scenario, state.medical, state.traffic])
+  }, [scenario, selectedMedicalFacility.name, state.medical, state.traffic])
 
   const askAdvisor = (question: string) => {
     const text = question.trim()
@@ -262,6 +277,14 @@ export const CommandWorkbench = memo(function CommandWorkbench({ event, renderMa
     window.setTimeout(() => advisorToggleRef.current?.focus(), 0)
   }
 
+  const previewMedicalFacility = useCallback((facilityId: DispatchSelectableFacilityId, routeProgress: number) => {
+    dispatch({ type: 'medical/select-facility', facilityId, routeProgress })
+  }, [])
+
+  const handleMedicalDrop = useCallback((drop: CommandMedicalRouteDrop) => {
+    previewMedicalFacility(drop.facilityId, drop.routeProgress)
+  }, [previewMedicalFacility])
+
   const scenarioAdvisorMessages = advisorMessages.filter((message) => message.scenario === scenario)
   const visibleAdvisorMessages = scenarioAdvisorMessages.length > 0
     ? scenarioAdvisorMessages
@@ -284,9 +307,6 @@ export const CommandWorkbench = memo(function CommandWorkbench({ event, renderMa
             if (scenario === 'traffic' && label === '阻塞前换道路口（模拟）') {
               dispatch({ type: 'traffic/drop-reroute', routeProgress: 0.43 })
             }
-            if (scenario === 'medical' && label === '广州市红十字会医院') {
-              dispatch({ type: 'medical/drop-reroute', routeProgress: 0.41 })
-            }
           },
         })}
         advisor={isDecisionScenario ? (
@@ -306,7 +326,7 @@ export const CommandWorkbench = memo(function CommandWorkbench({ event, renderMa
         traffic={state.traffic}
         medical={state.medical}
         onTrafficDrop={(routeProgress) => dispatch({ type: 'traffic/drop-reroute', routeProgress })}
-        onMedicalDrop={(routeProgress) => dispatch({ type: 'medical/drop-reroute', routeProgress })}
+        onMedicalDrop={handleMedicalDrop}
       />
 
       <aside className={`command-plan-panel ${isDecisionScenario ? '' : 'has-inline-advisor'}`} aria-label="动态方案与任务">
@@ -345,6 +365,7 @@ export const CommandWorkbench = memo(function CommandWorkbench({ event, renderMa
               event={event}
               scenario={scenario}
               planVersion={activePlanVersion}
+              approvedVersion={scenario === 'traffic' ? state.traffic.approvedVersion : state.medical.approvedVersion}
               phase={activePhase}
               trafficRouteId={state.traffic.activeRouteId}
               medicalFacilityId={state.medical.selectedFacilityId}
@@ -363,7 +384,7 @@ export const CommandWorkbench = memo(function CommandWorkbench({ event, renderMa
               state={state.medical}
               recalculationProgress={medicalRecalculationProgress}
               onAsk={askAdvisor}
-              onPreviewRedCross={() => dispatch({ type: 'medical/drop-reroute', routeProgress: 0.41 })}
+              onPreviewFacility={previewMedicalFacility}
             />
           )}
           {scenario === 'city-order' && (
@@ -622,6 +643,7 @@ function CommandSituationSummary({
   event,
   scenario,
   planVersion,
+  approvedVersion,
   phase,
   trafficRouteId,
   medicalFacilityId,
@@ -629,24 +651,26 @@ function CommandSituationSummary({
   event: CommandWorkbenchProps['event']
   scenario: CommandScenarioId
   planVersion: number
+  approvedVersion: number | null
   phase: CommandPhase
   trafficRouteId: 'B' | 'C'
-  medicalFacilityId: 'facility-shiyi' | 'facility-red-cross'
+  medicalFacilityId: DispatchFacilityId
 }) {
   const traffic = scenario === 'traffic'
+  const medicalFacility = getDispatchFacility(medicalFacilityId) ?? DISPATCH_FACILITIES[0]
   const currentPlan = traffic
     ? `路线 ${trafficRouteId}`
-    : medicalFacilityId === 'facility-red-cross'
-      ? '红十字会医院'
-      : '市一医院'
+    : medicalFacility.name
   const eta = traffic
     ? trafficRouteId === 'C' ? '10 分钟' : '8 分钟'
-    : medicalFacilityId === 'facility-red-cross' ? '10 分钟' : '6 分钟'
-  const versionValue = phase === 'recalculating' ? `v${planVersion + 1} 生成中` : `v${planVersion}`
+    : medicalFacility.etaMinutes === null ? '待核实' : `约 ${medicalFacility.etaMinutes} 分钟`
+  const recalculatingVersion = approvedVersion === planVersion ? planVersion + 1 : planVersion
+  const versionValue = phase === 'recalculating' ? `v${recalculatingVersion} 生成中` : `v${planVersion}`
+  const currentPlanDetail = traffic ? '三路线策略预设' : medicalRoutePhaseDetail(phase)
   const versionDetail = phase === 'blocked'
     ? '原批准版本'
     : phase === 'recalculating'
-      ? '尚未形成新版本'
+      ? '草案尚未完成同步'
       : phase === 'awaiting-approval'
         ? '待人工批准'
         : phase === 'approved'
@@ -667,8 +691,8 @@ function CommandSituationSummary({
       <h3>{event.title}</h3>
       <p><MapPin size={11} />{event.location}</p>
       <dl className="command-situation-metrics">
-        <ContextMetric label="当前方案" value={currentPlan} detail={traffic ? '三路线策略预设' : '接收点调整预览'} />
-        <ContextMetric label="预计到场" value={eta} detail="页面策略预设" />
+        <ContextMetric label="当前方案" value={currentPlan} detail={currentPlanDetail} />
+        <ContextMetric label="预计到场" value={eta} detail={traffic ? '页面策略预设' : medicalFacility.dataOrigin.eta} />
         <ContextMetric label="执行单位" value={traffic ? '清障车 02' : '救护车 AMB-02'} detail="模拟资源" />
         <ContextMetric label="方案版本" value={versionValue} detail={versionDetail} />
       </dl>
@@ -678,6 +702,18 @@ function CommandSituationSummary({
 
 function ContextMetric({ label, value, detail }: { label: string; value: string; detail: string }) {
   return <div><dt>{label}</dt><dd>{value}</dd><small>{detail}</small></div>
+}
+
+function medicalRoutePhaseDetail(phase: CommandPhase | null) {
+  if (phase === 'blocked') return '受影响基准 · 待选择候选'
+  if (phase === 'recalculating') return '调整草案生成中'
+  if (phase === 'awaiting-approval') return '调整预览 · 待人工批准'
+  if (phase === 'approved') return '已人工批准 · 待发送'
+  if (phase === 'sent-awaiting-ack') return '已模拟发送 · 待签收'
+  if (phase === 'acknowledged') return '已模拟签收 · 待执行'
+  if (phase === 'en-route') return '模拟执行中'
+  if (phase === 'arrived') return '已模拟抵达'
+  return '只读草案'
 }
 
 function DecisionException({
@@ -793,26 +829,26 @@ function trafficDecisionCopy(phase: CommandPhase) {
   }
 }
 
-function medicalDecisionCopy(phase: CommandPhase) {
+function medicalDecisionCopy(phase: CommandPhase, facility: (typeof DISPATCH_FACILITIES)[number]) {
   if (phase === 'blocked') return {
     title: '医疗协同回传异常',
-    detail: '任务包完成后收到新的接收资源状态，原接收点安排需要重新确认。',
-    signals: ['周边交通事故增加，接收需求上升', '原接收点回传无法继续支援', '备用接收医院需要重新确认'],
+    detail: '原接收医院（模拟）承接能力不足；页面已展示两家候选，等待负责人选择预览。',
+    signals: ['原接收状态为模拟、待核实', `候选接收状态：${dispatchCandidateReceivingStateSummary()}`, '接收状态优先，再比较演示 ETA，不自动选院'],
   }
   if (phase === 'recalculating') return {
-    title: '候选接收点调整方案生成中',
+    title: `${facility.name}调整方案生成中`,
     detail: '地图已按负责人的拖拽或右栏选择切换预览，系统正在同步重算 ETA、风险与联络任务。',
-    signals: ['市一医院路线已转为静态参考线', '红十字会医院路线已成为动态预览线', '候选接收状态仍需人工联络确认'],
+    signals: ['当前选中路线已高亮，其他路线保留为弱化参考', `${dispatchFacilityEtaLabel(facility)}`, '候选接收状态仍需人工联络确认'],
   }
   if (phase === 'awaiting-approval') return {
-    title: '红十字会医院转运方案待批准',
-    detail: '方案 v2 已生成；地图保持候选路线预览，等待负责人批准。',
-    signals: ['旧批准已与新方案解绑', '旧任务包已失效并保留审计记录', '候选医院接收状态仍为待联络确认'],
+    title: `${facility.name}转运方案待批准`,
+    detail: '方案 v2 已生成；确认前仍可点击或拖拽切换另一家候选医院。',
+    signals: ['旧批准已与新方案解绑', '旧任务包已失效并保留审计记录', `${facility.receivingState}，不等于已确认接收`],
   }
   if (phase === 'approved') return {
     title: '转运方案 v2 已批准',
     detail: '人工批准已绑定当前方案版本，任务包仍未发送。',
-    signals: ['红十字会医院仍是候选接收点', '新任务包等待本地模拟发送', '车辆尚未开始按新任务执行'],
+    signals: [`已批准草案绑定${facility.name}`, '新任务包等待本地模拟发送', '车辆尚未开始按新任务执行'],
   }
   if (phase === 'sent-awaiting-ack') return {
     title: '新转运任务已模拟发送',
@@ -826,8 +862,8 @@ function medicalDecisionCopy(phase: CommandPhase) {
   }
   if (phase === 'en-route') return {
     title: '救护车正沿候选路线模拟在途',
-    detail: '新任务已进入执行演示，车辆沿红十字会医院路线缓慢移动。',
-    signals: ['市一医院路线保持静态历史参考', '候选路线显示当前模拟执行', '真实接收状态仍不由页面确认'],
+    detail: `新任务已进入执行演示，车辆沿${facility.name}路线缓慢移动。`,
+    signals: ['未选路线保持静态参考', '选中路线显示当前模拟执行', '真实接收状态仍不由页面确认'],
   }
   return {
     title: '救护车已模拟抵达候选接收点',
@@ -947,9 +983,11 @@ function TrafficPlan({
 function PlanRecalculationProgress({
   progress,
   scenario,
+  facilityName,
 }: {
   progress: number
   scenario: 'traffic' | 'medical'
+  facilityName?: string
 }) {
   const stage = progress < 36
     ? scenario === 'medical' ? '绑定救护车与候选接收路线' : '捕捉车辆与目标道路'
@@ -966,7 +1004,7 @@ function PlanRecalculationProgress({
       <div
         className="command-plan-loading-track"
         role="progressbar"
-        aria-label={scenario === 'medical' ? '红十字会医院转运方案生成进度' : '路线 C 方案生成进度'}
+        aria-label={scenario === 'medical' ? `${facilityName ?? '候选医院'}转运方案生成进度` : '路线 C 方案生成进度'}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={progress}
@@ -986,49 +1024,49 @@ function MedicalPlan({
   state,
   recalculationProgress,
   onAsk,
-  onPreviewRedCross,
+  onPreviewFacility,
 }: {
   state: ReturnType<typeof createInitialCommandWorkbenchState>['medical']
   recalculationProgress: number
   onAsk: (question: string) => void
-  onPreviewRedCross: () => void
+  onPreviewFacility: (facilityId: DispatchSelectableFacilityId, routeProgress: number) => void
 }) {
-  const redCrossSelected = state.selectedFacilityId === 'facility-red-cross'
+  const selectedFacility = getDispatchFacility(state.selectedFacilityId) ?? DISPATCH_FACILITIES[0]
+  const selectableFacilities = rankDispatchFacilitiesForContact(getSelectableDispatchFacilities())
+  const firstContactFacilityId = selectableFacilities[0]?.id
+  const previewEditable = ['blocked', 'recalculating', 'awaiting-approval'].includes(state.phase)
   const replacementAccepted = ['acknowledged', 'en-route', 'arrived'].includes(state.phase)
-  const decisionCopy = medicalDecisionCopy(state.phase)
+  const decisionCopy = medicalDecisionCopy(state.phase, selectedFacility)
   const replacementConfirmed = ['approved', 'sent-awaiting-ack', 'acknowledged', 'en-route', 'arrived'].includes(state.phase)
-  const medicalMapStatus = state.phase === 'en-route'
-    ? '红十字会路线 · 模拟执行中'
-    : state.phase === 'arrived'
-      ? '红十字会路线 · 模拟抵达'
-      : redCrossSelected
-        ? '红十字会路线 · 调整预览'
-        : '市一医院路线 · 执行异常'
+  const medicalMapStatus = `${selectedFacility.name}路线 · ${medicalRoutePhaseDetail(state.phase)}`
   const medicalPlanStatus = state.phase === 'approved'
     ? '已批准，待模拟发送'
     : state.phase === 'sent-awaiting-ack'
       ? '已模拟发送，待签收'
       : replacementAccepted
         ? '新转运方案执行链已确认'
-        : redCrossSelected
+        : selectedFacility.selectable
           ? state.phase === 'recalculating' ? '新方案生成中' : '待负责人批准'
-          : '等待地图或右栏调整'
-  const redCrossStatus = state.phase === 'blocked'
-    ? '候选 · 待联络'
-    : state.phase === 'recalculating'
-      ? '方案生成中'
-      : state.phase === 'awaiting-approval'
-        ? '待人工批准'
-        : state.phase === 'approved'
-          ? '已批准 · 待发送'
-          : state.phase === 'sent-awaiting-ack'
-            ? '已模拟发送'
-            : state.phase === 'acknowledged'
-              ? '已模拟签收'
-              : state.phase === 'en-route'
-                ? '模拟执行中'
-                : '已模拟抵达'
+          : '等待点击或拖拽选择候选'
+  const selectedStatus = state.phase === 'recalculating'
+    ? '方案生成中'
+    : state.phase === 'awaiting-approval'
+      ? '待人工批准'
+      : state.phase === 'approved'
+        ? '已批准 · 待发送'
+        : state.phase === 'sent-awaiting-ack'
+          ? '已模拟发送'
+          : state.phase === 'acknowledged'
+            ? '已模拟签收'
+            : state.phase === 'en-route'
+              ? '模拟执行中'
+              : state.phase === 'arrived' ? '已模拟抵达' : '当前异常'
   const decisionTone = state.phase === 'blocked' ? 'danger' : ['recalculating', 'awaiting-approval'].includes(state.phase) ? 'blue' : 'green'
+  const candidateSwitchStatus = previewEditable
+    ? '可点击切换'
+    : state.phase === 'approved'
+      ? '已批准后冻结'
+      : '当前任务版本已冻结'
 
   return (
     <>
@@ -1036,34 +1074,34 @@ function MedicalPlan({
         title={decisionCopy.title}
         detail={decisionCopy.detail}
         signals={decisionCopy.signals}
-        onAsk={() => onAsk('请分析盘福路医疗协同异常，比较市一医院与红十字会医院，并列出需要人工联络核实的事项。')}
+        onAsk={() => onAsk('请分析盘福路医疗协同异常，比较受影响基准医院和两家候选医院，并列出需要人工联络核实的事项。')}
         tone={decisionTone}
         askLabel={state.phase === 'blocked' ? '让助手分析这项异常' : '让助手解释当前状态'}
       >
-        {state.phase === 'recalculating' && <PlanRecalculationProgress progress={recalculationProgress} scenario="medical" />}
+        {state.phase === 'recalculating' && (
+          <PlanRecalculationProgress progress={recalculationProgress} scenario="medical" facilityName={selectedFacility.name} />
+        )}
         <div className="command-decision-options" role="radiogroup" aria-label="盘福路候选接收点">
-          <DecisionOption
-            code="医"
-            title="广州市第一人民医院"
-            meta="6 分钟 · 原接收点"
-            evidence="当前模拟回传显示接收能力下降，不能直接沿用。"
-            status={redCrossSelected ? '原接收点' : '当前异常'}
-            selected={!redCrossSelected}
-            danger
-            disabled
-          />
-          <DecisionOption
-            code="医"
-            title="广州市红十字会医院"
-            meta="10 分钟 · 候选接收点"
-            evidence="公开静态 POI；接收能力与联络状态仍待人工确认。"
-            status={redCrossStatus}
-            selected={redCrossSelected}
-            recommended
-            disabled={state.phase !== 'blocked'}
-            onClick={onPreviewRedCross}
-            testId="medical-facility-option-red-cross"
-          />
+          {DISPATCH_FACILITIES.map((facility) => {
+            const selected = facility.id === state.selectedFacilityId
+            const candidateId = isDispatchSelectableFacilityId(facility.id) ? facility.id : null
+            return (
+              <DecisionOption
+                key={facility.id}
+                code={facility.planningState.impacted ? '原' : '候'}
+                title={facility.name}
+                meta={`${dispatchFacilityEtaLabel(facility)} · ${facility.planningState.impacted ? '受影响基准' : '候选接收点'}`}
+                evidence={facility.recommendationBasis}
+                status={selected ? selectedStatus : facility.planningState.impacted ? '承接能力不足' : candidateSwitchStatus}
+                selected={selected}
+                danger={facility.planningState.impacted}
+                recommended={facility.id === firstContactFacilityId}
+                disabled={!candidateId || !previewEditable}
+                onClick={candidateId ? () => onPreviewFacility(candidateId, facility.route.defaultProgress) : undefined}
+                testId={`medical-facility-option-${facility.id}`}
+              />
+            )
+          })}
         </div>
       </DecisionException>
 
@@ -1072,7 +1110,7 @@ function MedicalPlan({
           ['地图状态', medicalMapStatus],
           ['方案状态', medicalPlanStatus],
           ['执行单位', '救护车 AMB-02 · 保留'],
-          ['联络负责人', replacementConfirmed ? '转运协调负责人' : redCrossSelected ? '候选：转运协调负责人' : '急救联络负责人'],
+          ['联络负责人', replacementConfirmed ? '转运协调负责人' : selectedFacility.selectable ? '候选：转运协调负责人' : '急救联络负责人'],
         ]}
       />
 
@@ -1262,13 +1300,13 @@ function CommandApprovalFooter({
 
 function advisorBoundaryForScenario(scenario: CommandScenarioId) {
   if (scenario === 'traffic') return '道路几何来自公开底图；阻塞、车辆、ETA、任务与回执均为本地模拟。我只解释、比较并整理草案，不批准、不发送、不移动车辆。'
-  if (scenario === 'medical') return '医院名称与坐标为公开静态 POI；接收能力、车辆、ETA、调派与回执均为模拟或待联络确认。我不作临床判断，也不确认医院可接收。'
+  if (scenario === 'medical') return '原接收医院为既有模拟点位；两家候选医院名称与坐标为公开静态 POI。接收能力、车辆、ETA、调派与回执均为模拟或待联络确认。我不作临床判断，也不确认医院可接收。'
   return '我可以解释页面信息、比较影响并整理草案；不会批准、发送或直接调度资源。'
 }
 
 function advisorPromptsForScenario(scenario: CommandScenarioId) {
   if (scenario === 'traffic') return ['解释当前异常', '比较 A/B/C 路线', '说明改线任务影响', '整理路线 C 草案']
-  if (scenario === 'medical') return ['解释接收异常', '比较两个接收点', '列出联络核实项', '整理转运调整草案']
+  if (scenario === 'medical') return ['解释接收异常', '比较三家医院', '列出联络核实项', '整理转运调整草案']
   if (scenario === 'city-order') return ['区分待核实证据', '整理 AI Brief 草案']
   return ['解释当前状态', '整理影响清单']
 }
@@ -1278,7 +1316,7 @@ function advisorResponse(
   text: string,
   context: {
     trafficRouteId: 'B' | 'C'
-    medicalFacilityId: 'facility-shiyi' | 'facility-red-cross'
+    medicalFacilityId: DispatchFacilityId
     phase: CommandPhase | null
   },
 ) {
@@ -1291,7 +1329,11 @@ function advisorResponse(
     return '当前异常是路线 B 前方受阻。应先核实阻塞范围、预计恢复时间和路线 C 的可通行条件；页面车辆位置、ETA 和回执均为本地模拟。'
   }
   if (scenario === 'medical') {
-    if (text.includes('比较') || text.includes('接收点')) return '市一医院是原接收点，页面模拟 ETA 为 6 分钟，但当前回传显示接收能力下降；红十字会医院是公开静态 POI，页面模拟 ETA 为 10 分钟，真实接收能力与联络状态仍未知。当前地图显示' + (context.medicalFacilityId === 'facility-red-cross' ? '红十字会医院调整预览，尚未批准下发。' : '市一医院原路线的异常状态。')
+    const selectedFacility = getDispatchFacility(context.medicalFacilityId) ?? DISPATCH_FACILITIES[0]
+    if (text.includes('比较') || text.includes('接收点') || text.includes('医院')) {
+      const comparison = DISPATCH_FACILITIES.map((facility) => `${facility.name}：${facility.receivingState}，${dispatchFacilityEtaLabel(facility)}`).join('；')
+      return `${comparison}。临时演示规则只用于安排人工联络顺序：先比较接收状态，再比较演示 ETA；不构成自动最优医院决策。“可联络”不等于已确认接收。当前地图显示${selectedFacility.name}路线，状态为“${medicalRoutePhaseDetail(context.phase)}”。`
+    }
     if (text.includes('核实') || text.includes('联络')) return '需要人工核实候选医院当前接收能力、急诊联络人、预计交接窗口、车辆到达后的接收点位，以及途中风险变化；系统不会替代临床分级或接收确认。'
     if (text.includes('影响') || text.includes('草案')) return '更换接收点会重算路线、ETA、联络负责人和任务清单，旧批准与旧任务包不能自动继承。我可以整理待批准草案，但不会批准或发送。'
     return '当前是模拟的医疗协同回传异常，不代表真实床位或专科能力。应先核实原接收点状态，再比较候选接收点及转运影响。'

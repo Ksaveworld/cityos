@@ -10,6 +10,7 @@ export interface PoiMarkerDatum {
   position: [number, number]
   kind: PoiKind
   label: string
+  meta?: string
   confidence?: PoiConfidence
   /** 告警起伏光效，用于需要引起注意的事件锚点 */
   alarm?: boolean
@@ -231,6 +232,7 @@ function PoiBadge({ point }: { point: PoiMarkerDatum }) {
       data-compact={point.compact ? 'true' : 'false'}
       data-role={facility ? 'facility' : 'incident'}
       data-planning-state={point.planningState ?? 'none'}
+      data-selected={point.selected ? 'true' : 'false'}
     >
       {point.selected && point.detail && (
         <div className="cityos-poi-detail" role="dialog" aria-label={`${point.detail.title}资源详情`}>
@@ -283,8 +285,8 @@ function PoiBadge({ point }: { point: PoiMarkerDatum }) {
           point.onSelect?.()
         }}
         disabled={!interactive}
-        title={`${point.label} · ${spec.category}${point.planningState ? ` · ${point.planningState === 'current' ? '当前分配' : point.planningState === 'candidate' ? '待批准候选' : '受影响资源'}` : ''}${unverified ? ' · 待核实' : ''}`}
-        aria-label={`${point.label}，${spec.category}${point.planningState ? `，${point.planningState === 'current' ? '当前分配' : point.planningState === 'candidate' ? '待批准候选' : '受影响资源'}` : ''}${unverified ? '，待核实' : ''}`}
+        title={`${point.label} · ${spec.category}${point.meta ? ` · ${point.meta}` : ''}${point.planningState ? ` · ${point.planningState === 'current' ? '当前分配' : point.planningState === 'candidate' ? '候选资源' : '受影响资源'}` : ''}${unverified ? ' · 待核实' : ''}`}
+        aria-label={`${point.label}，${spec.category}${point.meta ? `，${point.meta}` : ''}${point.planningState ? `，${point.planningState === 'current' ? '当前分配' : point.planningState === 'candidate' ? '候选资源' : '受影响资源'}` : ''}${unverified ? '，待核实' : ''}`}
       >
         <span
           className="cityos-poi-glyph"
@@ -302,7 +304,8 @@ function PoiBadge({ point }: { point: PoiMarkerDatum }) {
       <span className="cityos-poi-tail" style={{ background: spec.color }} aria-hidden="true" />
       {!point.compact && (
         <span className="cityos-poi-label" data-confidence={unverified ? 'unverified' : 'confirmed'}>
-          {point.label}
+          <strong>{point.label}</strong>
+          {point.meta && <small>{point.meta}</small>}
         </span>
       )}
     </div>
