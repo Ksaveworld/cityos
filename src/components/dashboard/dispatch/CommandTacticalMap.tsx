@@ -12,6 +12,7 @@ import type { CommandMedicalRouteDrop } from './CommandMapInteractionContext'
 interface CommandTacticalMapProps {
   scenario: CommandScenarioId
   map: ReactNode
+  advisor?: ReactNode
   traffic: TrafficCommandState
   medical: MedicalCommandState
   onTrafficDrop: (routeProgress: number) => void
@@ -21,6 +22,7 @@ interface CommandTacticalMapProps {
 export const CommandTacticalMap = memo(function CommandTacticalMap({
   scenario,
   map,
+  advisor,
   traffic,
   medical,
   onTrafficDrop,
@@ -68,7 +70,7 @@ export const CommandTacticalMap = memo(function CommandTacticalMap({
 
       <div
         className="command-map-stage"
-        data-execution-route={scenario === 'traffic'
+        data-preview-route={scenario === 'traffic'
           ? traffic.activeRouteId
           : scenario === 'medical'
             ? medical.selectedFacilityId === 'facility-red-cross' ? 'red-cross' : 'shiyi'
@@ -100,6 +102,8 @@ export const CommandTacticalMap = memo(function CommandTacticalMap({
           <span className="command-shape command-shape-solid" aria-hidden="true" />已确认事件
           <span className="command-shape command-shape-dashed" aria-hidden="true" />待核实证据
         </div>
+
+        {advisor}
       </div>
     </section>
   )

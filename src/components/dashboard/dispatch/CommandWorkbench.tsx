@@ -7,6 +7,7 @@ import {
   useState,
   type FormEvent,
   type ReactNode,
+  type RefObject,
 } from 'react'
 import {
   AlertTriangle,
@@ -28,7 +29,6 @@ import {
   RefreshCcw,
   Route,
   Send,
-  ShieldAlert,
   Sparkles,
   Video,
   X,
@@ -57,6 +57,8 @@ interface CommandWorkbenchProps {
     location: string
     domain: string
     domainColor: string
+    timeLabel?: string
+    sourceLabel?: string
   }
   renderMap: (
     scenario: CommandScenarioId,
@@ -69,6 +71,7 @@ interface CommandWorkbenchProps {
 
 interface AdvisorMessage {
   id: string
+  scenario: CommandScenarioId
   role: 'assistant' | 'user'
   text: string
 }
@@ -79,19 +82,19 @@ const PHASE_META: Record<CommandPhase, { label: string; tone: string }> = {
   preview: { label: '调整预览', tone: 'violet' },
   'awaiting-approval': { label: '待人工批准', tone: 'amber' },
   approved: { label: '已批准 · 待发送', tone: 'green' },
-  'sent-awaiting-ack': { label: '已发送 · 待签收', tone: 'blue' },
-  acknowledged: { label: '已签收 · 待执行', tone: 'green' },
-  'en-route': { label: '新指令执行中 · 在途', tone: 'blue' },
-  arrived: { label: '已抵达', tone: 'green' },
+  'sent-awaiting-ack': { label: '已模拟发送 · 待签收', tone: 'blue' },
+  acknowledged: { label: '已模拟签收 · 待执行', tone: 'green' },
+  'en-route': { label: '新指令模拟执行中 · 在途', tone: 'blue' },
+  arrived: { label: '已模拟抵达', tone: 'green' },
 }
 
 const TASK_LABEL: Record<CommandTaskStatus, string> = {
   invalidated: '旧任务已失效',
   'pending-send': '新任务包待发送',
-  'sent-awaiting-ack': '已发送，等待模拟签收',
+  'sent-awaiting-ack': '已模拟发送，等待模拟签收',
   accepted: '接收单位已模拟签收',
-  'en-route': '执行单位在途',
-  arrived: '执行单位已抵达',
+  'en-route': '执行单位模拟在途',
+  arrived: '执行单位已模拟抵达',
 }
 
 export const CommandWorkbench = memo(function CommandWorkbench({ event, renderMap }: CommandWorkbenchProps) {
@@ -101,15 +104,10 @@ export const CommandWorkbench = memo(function CommandWorkbench({ event, renderMa
   const [reducedMotion, setReducedMotion] = useState(false)
   const [trafficRecalculationProgress, setTrafficRecalculationProgress] = useState(0)
   const [medicalRecalculationProgress, setMedicalRecalculationProgress] = useState(0)
-  const [advisorMessages, setAdvisorMessages] = useState<AdvisorMessage[]>([
-    {
-      id: 'assistant-boundary',
-      role: 'assistant',
-      text: '我可以解释路线、比较影响并整理调整草案；不会批准、发送或直接移动资源。',
-    },
-  ])
+  const [advisorMessages, setAdvisorMessages] = useState<AdvisorMessage[]>([])
   const advisorToggleRef = useRef<HTMLButtonElement>(null)
   const scenario = commandScenarioForEvent(event.id)
+  const isDecisionScenario = scenario === 'traffic' || scenario === 'medical'
   const scenarioMeta = COMMAND_SCENARIOS.find((item) => item.id === scenario) ?? {
     id: 'generic' as const,
     short: '未知',
@@ -237,23 +235,43 @@ export const CommandWorkbench = memo(function CommandWorkbench({ event, renderMa
     return '调度工作台已切换场景。'
   }, [scenario, state.medical, state.traffic])
 
-  const submitAdvisor = (event_: FormEvent<HTMLFormElement>) => {
-    event_.preventDefault()
-    const text = advisorInput.trim()
+  const askAdvisor = (question: string) => {
+    const text = question.trim()
     if (!text) return
-    const response = advisorResponse(scenario, text)
+    const response = advisorResponse(scenario, text, {
+      trafficRouteId: state.traffic.activeRouteId,
+      medicalFacilityId: state.medical.selectedFacilityId,
+      phase: activePhase,
+    })
     setAdvisorMessages((current) => [
       ...current,
-      { id: crypto.randomUUID(), role: 'user', text },
-      { id: crypto.randomUUID(), role: 'assistant', text: response },
+      { id: crypto.randomUUID(), scenario, role: 'user', text },
+      { id: crypto.randomUUID(), scenario, role: 'assistant', text: response },
     ])
     setAdvisorInput('')
+    setAdvisorOpen(true)
+  }
+
+  const submitAdvisor = (event_: FormEvent<HTMLFormElement>) => {
+    event_.preventDefault()
+    askAdvisor(advisorInput)
   }
 
   const closeAdvisor = () => {
     setAdvisorOpen(false)
     window.setTimeout(() => advisorToggleRef.current?.focus(), 0)
   }
+
+  const scenarioAdvisorMessages = advisorMessages.filter((message) => message.scenario === scenario)
+  const visibleAdvisorMessages = scenarioAdvisorMessages.length > 0
+    ? scenarioAdvisorMessages
+    : [{
+        id: `assistant-boundary-${scenario}`,
+        scenario,
+        role: 'assistant' as const,
+        text: advisorBoundaryForScenario(scenario),
+      }]
+  const advisorPrompts = advisorPromptsForScenario(scenario)
 
   return (
     <main className="command-workbench" data-testid="command-workbench">
@@ -271,34 +289,82 @@ export const CommandWorkbench = memo(function CommandWorkbench({ event, renderMa
             }
           },
         })}
+        advisor={isDecisionScenario ? (
+          <CommandAdvisor
+            open={advisorOpen}
+            input={advisorInput}
+            messages={visibleAdvisorMessages}
+            prompts={advisorPrompts}
+            toggleRef={advisorToggleRef}
+            onOpenChange={setAdvisorOpen}
+            onInputChange={setAdvisorInput}
+            onAsk={askAdvisor}
+            onSubmit={submitAdvisor}
+            onClose={closeAdvisor}
+          />
+        ) : null}
         traffic={state.traffic}
         medical={state.medical}
         onTrafficDrop={(routeProgress) => dispatch({ type: 'traffic/drop-reroute', routeProgress })}
         onMedicalDrop={(routeProgress) => dispatch({ type: 'medical/drop-reroute', routeProgress })}
       />
 
-      <aside className="command-plan-panel" aria-label="动态方案与任务">
+      <aside className={`command-plan-panel ${isDecisionScenario ? '' : 'has-inline-advisor'}`} aria-label="动态方案与任务">
         <header className="command-plan-header">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="command-plan-status-dot" style={{ backgroundColor: scenarioMeta.color }} />
-              <h2>动态方案</h2>
-              <span className={`command-phase-badge tone-${headerPhase.tone}`}>{headerPhase.label}</span>
-            </div>
-            <p className="truncate">{event.title} · {event.location}</p>
-          </div>
-          <div className="command-version">
-            <span>{activePlanVersion === null ? scenario === 'city-order' ? 'BRIEF' : 'SCOPE' : 'PLAN'}</span>
-            <strong>{activePlanVersion === null ? scenario === 'city-order' ? `${state.evidence.filter((item) => item.status === 'verified').length}/3` : '草案' : `v${activePlanVersion}`}</strong>
-          </div>
+          {isDecisionScenario ? (
+            <>
+              <div className="min-w-0">
+                <h2>具体调度情况</h2>
+                <p>当前任务包、异常信息与人工选择</p>
+              </div>
+              <span className={`command-phase-badge tone-${headerPhase.tone}`}>
+                {activePhase === 'blocked' ? '1 项异常' : headerPhase.label}
+              </span>
+            </>
+          ) : (
+            <>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="command-plan-status-dot" style={{ backgroundColor: scenarioMeta.color }} />
+                  <h2>动态方案</h2>
+                  <span className={`command-phase-badge tone-${headerPhase.tone}`}>{headerPhase.label}</span>
+                </div>
+                <p className="truncate">{event.title} · {event.location}</p>
+              </div>
+              <div className="command-version">
+                <span>{scenario === 'city-order' ? 'BRIEF' : 'SCOPE'}</span>
+                <strong>{scenario === 'city-order' ? `${state.evidence.filter((item) => item.status === 'verified').length}/3` : '草案'}</strong>
+              </div>
+            </>
+          )}
         </header>
 
         <div className="command-plan-scroll">
+          {isDecisionScenario && activePlanVersion !== null && activePhase !== null && (
+            <CommandSituationSummary
+              event={event}
+              scenario={scenario}
+              planVersion={activePlanVersion}
+              phase={activePhase}
+              trafficRouteId={state.traffic.activeRouteId}
+              medicalFacilityId={state.medical.selectedFacilityId}
+            />
+          )}
           {scenario === 'traffic' && (
-            <TrafficPlan state={state.traffic} recalculationProgress={trafficRecalculationProgress} />
+            <TrafficPlan
+              state={state.traffic}
+              recalculationProgress={trafficRecalculationProgress}
+              onAsk={askAdvisor}
+              onPreviewRouteC={() => dispatch({ type: 'traffic/drop-reroute', routeProgress: 0.43 })}
+            />
           )}
           {scenario === 'medical' && (
-            <MedicalPlan state={state.medical} recalculationProgress={medicalRecalculationProgress} />
+            <MedicalPlan
+              state={state.medical}
+              recalculationProgress={medicalRecalculationProgress}
+              onAsk={askAdvisor}
+              onPreviewRedCross={() => dispatch({ type: 'medical/drop-reroute', routeProgress: 0.41 })}
+            />
           )}
           {scenario === 'city-order' && (
             <EvidencePlan
@@ -311,56 +377,20 @@ export const CommandWorkbench = memo(function CommandWorkbench({ event, renderMa
           )}
         </div>
 
-        <section
-          className={`command-advisor ${advisorOpen ? 'is-open' : ''}`}
-          aria-label="Chatbot 参谋"
-          onKeyDown={(event_) => {
-            if (event_.key !== 'Escape' || !advisorOpen) return
-            event_.stopPropagation()
-            closeAdvisor()
-          }}
-        >
-          <button
-            ref={advisorToggleRef}
-            type="button"
-            className="command-advisor-toggle"
-            aria-expanded={advisorOpen}
-            aria-controls="command-advisor-body"
-            onClick={() => setAdvisorOpen((current) => !current)}
-          >
-            <span className="command-advisor-icon"><Bot size={15} /></span>
-            <span className="min-w-0 flex-1 text-left"><strong>城安参谋</strong><small>只解释与生成草案，不执行</small></span>
-            {advisorOpen ? <ChevronDown size={15} /> : <ChevronUp size={15} />}
-          </button>
-          {advisorOpen && (
-            <div id="command-advisor-body" className="command-advisor-body">
-              <div className="command-advisor-toolbar">
-                <span><Sparkles size={12} />本地演示回复</span>
-                <button type="button" onClick={closeAdvisor} aria-label="收起城安参谋"><X size={13} /></button>
-              </div>
-              <div className="command-advisor-messages">
-                {advisorMessages.slice(-4).map((message) => (
-                  <p key={message.id} className={`command-advisor-message is-${message.role}`}>{message.text}</p>
-                ))}
-              </div>
-              <div className="command-advisor-prompts">
-                {['比较三条路线', '解释为什么要重新批准'].map((prompt) => (
-                  <button key={prompt} type="button" onClick={() => setAdvisorInput(prompt)}>{prompt}</button>
-                ))}
-              </div>
-              <form onSubmit={submitAdvisor} className="command-advisor-form">
-                <label className="sr-only" htmlFor="command-advisor-input">询问城安参谋</label>
-                <input
-                  id="command-advisor-input"
-                  value={advisorInput}
-                  onChange={(event_) => setAdvisorInput(event_.target.value)}
-                  placeholder="询问路线、风险或任务影响"
-                />
-                <button type="submit" aria-label="发送问题"><Send size={14} /></button>
-              </form>
-            </div>
-          )}
-        </section>
+        {!isDecisionScenario && (
+          <InlineCommandAdvisor
+            open={advisorOpen}
+            input={advisorInput}
+            messages={visibleAdvisorMessages}
+            prompts={advisorPrompts}
+            toggleRef={advisorToggleRef}
+            onOpenChange={setAdvisorOpen}
+            onInputChange={setAdvisorInput}
+            onAsk={askAdvisor}
+            onSubmit={submitAdvisor}
+            onClose={closeAdvisor}
+          />
+        )}
 
         <CommandApprovalFooter
           scenario={scenario}
@@ -436,62 +466,468 @@ function createCommandExecutionFrame({
   }
 }
 
+interface CommandAdvisorViewProps {
+  open: boolean
+  input: string
+  messages: AdvisorMessage[]
+  prompts: string[]
+  toggleRef: RefObject<HTMLButtonElement | null>
+  onOpenChange: (open: boolean) => void
+  onInputChange: (value: string) => void
+  onAsk: (question: string) => void
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void
+  onClose: () => void
+}
+
+function CommandAdvisor({
+  open,
+  input,
+  messages,
+  prompts,
+  toggleRef,
+  onOpenChange,
+  onInputChange,
+  onAsk,
+  onSubmit,
+  onClose,
+}: CommandAdvisorViewProps) {
+  const closeButtonRef = useRef<HTMLButtonElement>(null)
+
+  useEffect(() => {
+    if (open) closeButtonRef.current?.focus()
+  }, [open])
+
+  return (
+    <section
+      className={`command-map-advisor ${open ? 'is-open' : ''}`}
+      aria-label="Chatbot 助手"
+      onKeyDown={(event_) => {
+        if (event_.key !== 'Escape' || !open) return
+        event_.stopPropagation()
+        onClose()
+      }}
+    >
+      {!open && (
+        <button
+          ref={toggleRef}
+          type="button"
+          className="command-map-advisor-toggle"
+          aria-expanded="false"
+          aria-controls="command-advisor-body"
+          onClick={() => onOpenChange(true)}
+        >
+          <Bot size={14} />Chatbot 助手
+        </button>
+      )}
+      {open && (
+        <div id="command-advisor-body" className="command-map-advisor-drawer" role="dialog" aria-label="CityOS 城安助手">
+          <header className="command-map-advisor-header">
+            <span className="command-advisor-icon"><Bot size={16} /></span>
+            <div><strong>CityOS 城安助手</strong><small>异常研判、资源比选与调整草案</small></div>
+            <button ref={closeButtonRef} type="button" onClick={onClose} aria-label="收起 Chatbot 助手"><X size={14} /></button>
+          </header>
+          <div className="command-advisor-toolbar"><span><Sparkles size={12} />本地演示回复</span></div>
+          <div className="command-advisor-messages" aria-live="polite">
+            {messages.slice(-6).map((message) => (
+              <p key={message.id} className={`command-advisor-message is-${message.role}`}>{message.text}</p>
+            ))}
+          </div>
+          <div className="command-advisor-prompts">
+            {prompts.map((prompt) => (
+              <button key={prompt} type="button" onClick={() => onAsk(prompt)}>{prompt}</button>
+            ))}
+          </div>
+          <form onSubmit={onSubmit} className="command-advisor-form">
+            <label className="sr-only" htmlFor="command-advisor-input">询问 CityOS 城安助手</label>
+            <input
+              id="command-advisor-input"
+              value={input}
+              onChange={(event_) => onInputChange(event_.target.value)}
+              placeholder="询问异常、候选方案或任务影响"
+            />
+            <button type="submit" aria-label="发送问题"><Send size={14} /></button>
+          </form>
+          <p className="command-advisor-boundary"><LockKeyhole size={11} />助手不会批准、发送或直接调度资源</p>
+        </div>
+      )}
+    </section>
+  )
+}
+
+function InlineCommandAdvisor({
+  open,
+  input,
+  messages,
+  prompts,
+  toggleRef,
+  onOpenChange,
+  onInputChange,
+  onAsk,
+  onSubmit,
+  onClose,
+}: CommandAdvisorViewProps) {
+  return (
+    <section
+      className={`command-advisor ${open ? 'is-open' : ''}`}
+      aria-label="Chatbot 参谋"
+      onKeyDown={(event_) => {
+        if (event_.key !== 'Escape' || !open) return
+        event_.stopPropagation()
+        onClose()
+      }}
+    >
+      <button
+        ref={toggleRef}
+        type="button"
+        className="command-advisor-toggle"
+        aria-expanded={open}
+        aria-controls="command-inline-advisor-body"
+        onClick={() => onOpenChange(!open)}
+      >
+        <span className="command-advisor-icon"><Bot size={15} /></span>
+        <span className="min-w-0 flex-1 text-left"><strong>城安参谋</strong><small>只解释与生成草案，不执行</small></span>
+        {open ? <ChevronDown size={15} /> : <ChevronUp size={15} />}
+      </button>
+      {open && (
+        <div id="command-inline-advisor-body" className="command-advisor-body">
+          <div className="command-advisor-toolbar">
+            <span><Sparkles size={12} />本地演示回复</span>
+            <button type="button" onClick={onClose} aria-label="收起城安参谋"><X size={13} /></button>
+          </div>
+          <div className="command-advisor-messages" aria-live="polite">
+            {messages.slice(-4).map((message) => (
+              <p key={message.id} className={`command-advisor-message is-${message.role}`}>{message.text}</p>
+            ))}
+          </div>
+          <div className="command-advisor-prompts">
+            {prompts.map((prompt) => <button key={prompt} type="button" onClick={() => onAsk(prompt)}>{prompt}</button>)}
+          </div>
+          <form onSubmit={onSubmit} className="command-advisor-form">
+            <label className="sr-only" htmlFor="command-inline-advisor-input">询问城安参谋</label>
+            <input
+              id="command-inline-advisor-input"
+              value={input}
+              onChange={(event_) => onInputChange(event_.target.value)}
+              placeholder="询问证据、风险或任务影响"
+            />
+            <button type="submit" aria-label="发送问题"><Send size={14} /></button>
+          </form>
+        </div>
+      )}
+    </section>
+  )
+}
+
+function CommandSituationSummary({
+  event,
+  scenario,
+  planVersion,
+  phase,
+  trafficRouteId,
+  medicalFacilityId,
+}: {
+  event: CommandWorkbenchProps['event']
+  scenario: CommandScenarioId
+  planVersion: number
+  phase: CommandPhase
+  trafficRouteId: 'B' | 'C'
+  medicalFacilityId: 'facility-shiyi' | 'facility-red-cross'
+}) {
+  const traffic = scenario === 'traffic'
+  const currentPlan = traffic
+    ? `路线 ${trafficRouteId}`
+    : medicalFacilityId === 'facility-red-cross'
+      ? '红十字会医院'
+      : '市一医院'
+  const eta = traffic
+    ? trafficRouteId === 'C' ? '10 分钟' : '8 分钟'
+    : medicalFacilityId === 'facility-red-cross' ? '10 分钟' : '6 分钟'
+  const versionValue = phase === 'recalculating' ? `v${planVersion + 1} 生成中` : `v${planVersion}`
+  const versionDetail = phase === 'blocked'
+    ? '原批准版本'
+    : phase === 'recalculating'
+      ? '尚未形成新版本'
+      : phase === 'awaiting-approval'
+        ? '待人工批准'
+        : phase === 'approved'
+          ? '已批准，待发送'
+          : phase === 'sent-awaiting-ack'
+            ? '已模拟发送'
+            : phase === 'acknowledged'
+              ? '已模拟签收'
+              : phase === 'en-route'
+                ? '新任务模拟在途'
+                : '新任务模拟抵达'
+  return (
+    <section className="command-situation-card">
+      <div className="command-situation-meta">
+        <span style={{ backgroundColor: event.domainColor }}>{event.domain}</span>
+        <time>{event.timeLabel ?? '本地演示'}</time>
+      </div>
+      <h3>{event.title}</h3>
+      <p><MapPin size={11} />{event.location}</p>
+      <dl className="command-situation-metrics">
+        <ContextMetric label="当前方案" value={currentPlan} detail={traffic ? '三路线策略预设' : '接收点调整预览'} />
+        <ContextMetric label="预计到场" value={eta} detail="页面策略预设" />
+        <ContextMetric label="执行单位" value={traffic ? '清障车 02' : '救护车 AMB-02'} detail="模拟资源" />
+        <ContextMetric label="方案版本" value={versionValue} detail={versionDetail} />
+      </dl>
+    </section>
+  )
+}
+
+function ContextMetric({ label, value, detail }: { label: string; value: string; detail: string }) {
+  return <div><dt>{label}</dt><dd>{value}</dd><small>{detail}</small></div>
+}
+
+function DecisionException({
+  title,
+  detail,
+  signals,
+  onAsk,
+  tone = 'danger',
+  askLabel = '让助手分析这项异常',
+  children,
+}: {
+  title: string
+  detail: string
+  signals: string[]
+  onAsk: () => void
+  tone?: 'danger' | 'blue' | 'green'
+  askLabel?: string
+  children: ReactNode
+}) {
+  return (
+    <section className={`command-decision-exception tone-${tone}`}>
+      <div className="command-decision-heading">
+        <span><AlertTriangle size={14} /></span>
+        <div><h3>{title}</h3><p>{detail}</p></div>
+      </div>
+      <ul>
+        {signals.map((signal) => <li key={signal}><i />{signal}</li>)}
+      </ul>
+      <button type="button" className="command-decision-ask" onClick={onAsk}><Bot size={12} />{askLabel}</button>
+      {children}
+    </section>
+  )
+}
+
+function DecisionOption({
+  code,
+  title,
+  meta,
+  evidence,
+  status,
+  selected = false,
+  recommended = false,
+  danger = false,
+  disabled = false,
+  onClick,
+  testId,
+}: {
+  code: string
+  title: string
+  meta: string
+  evidence: string
+  status: string
+  selected?: boolean
+  recommended?: boolean
+  danger?: boolean
+  disabled?: boolean
+  onClick?: () => void
+  testId?: string
+}) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={selected}
+      disabled={disabled}
+      onClick={onClick}
+      data-testid={testId}
+      className={`command-decision-option ${selected ? 'is-selected' : ''} ${recommended ? 'is-recommended' : ''} ${danger ? 'is-danger' : ''}`}
+    >
+      <span className="command-decision-radio" aria-hidden="true" />
+      <span className="command-decision-code">{code}</span>
+      <span className="command-decision-copy"><strong>{title}</strong><small>{meta}</small><em>依据：{evidence}</em></span>
+      <b>{status}</b>
+    </button>
+  )
+}
+
+function trafficDecisionCopy(phase: CommandPhase) {
+  if (phase === 'blocked') return {
+    title: '道路阻塞导致执行异常',
+    detail: '路线 B 虽然用时最短，但前方清障反馈延迟，车辆将在安全决策点前暂停。',
+    signals: ['路线 A 12 分钟：常规合规路线，用时最长', '路线 B 8 分钟：距离最短，但前方受阻', '路线 C 10 分钟：绕开阻塞，仍短于路线 A'],
+  }
+  if (phase === 'recalculating') return {
+    title: '路线 C 调整方案生成中',
+    detail: '地图已按负责人的拖拽或右栏选择切换预览，系统正在同步重算风险与任务清单。',
+    signals: ['路线 B 已转为静态参考线', '路线 C 已成为动态预览线', '新方案尚未形成，旧任务状态暂不改写'],
+  }
+  if (phase === 'awaiting-approval') return {
+    title: '路线 C 调整方案待确认',
+    detail: '方案 v2 已生成；地图保持路线 C 预览，等待负责人确认并模拟下发。',
+    signals: ['旧批准已与新方案解绑', '旧任务包已失效并保留审计记录', '接收单位尚未收到新任务包'],
+  }
+  if (phase === 'sent-awaiting-ack') return {
+    title: '路线 C 新任务已模拟发送',
+    detail: '负责人已确认方案 v2，并完成本地模拟下发；当前等待接收单位模拟签收。',
+    signals: ['路线 C 已绑定方案 v2', '旧任务包保持失效状态', '车辆尚未开始按新任务执行'],
+  }
+  if (phase === 'acknowledged') return {
+    title: '路线 C 新任务已模拟签收',
+    detail: '接收单位已完成本地模拟签收，等待指挥员启动执行演示。',
+    signals: ['新任务包版本为 v2', '旧任务包已被新版本替代', '车辆仍停在当前安全位置'],
+  }
+  if (phase === 'en-route') return {
+    title: '清障车正沿路线 C 模拟在途',
+    detail: '新任务已进入执行演示，车辆沿动态路线 C 缓慢移动。',
+    signals: ['路线 B 保持静态历史参考', '路线 C 显示当前模拟执行', '到场回执尚未形成'],
+  }
+  return {
+    title: '清障车已模拟抵达作业点',
+    detail: '本条改线演示已完成；页面仅保留方案、任务与回执的本地审计状态。',
+    signals: ['方案 v2 已完成本地演示', '路线与回执均非真实生产状态', '可重置后重新演示本条链路'],
+  }
+}
+
+function medicalDecisionCopy(phase: CommandPhase) {
+  if (phase === 'blocked') return {
+    title: '医疗协同回传异常',
+    detail: '任务包完成后收到新的接收资源状态，原接收点安排需要重新确认。',
+    signals: ['周边交通事故增加，接收需求上升', '原接收点回传无法继续支援', '备用接收医院需要重新确认'],
+  }
+  if (phase === 'recalculating') return {
+    title: '候选接收点调整方案生成中',
+    detail: '地图已按负责人的拖拽或右栏选择切换预览，系统正在同步重算 ETA、风险与联络任务。',
+    signals: ['市一医院路线已转为静态参考线', '红十字会医院路线已成为动态预览线', '候选接收状态仍需人工联络确认'],
+  }
+  if (phase === 'awaiting-approval') return {
+    title: '红十字会医院转运方案待批准',
+    detail: '方案 v2 已生成；地图保持候选路线预览，等待负责人批准。',
+    signals: ['旧批准已与新方案解绑', '旧任务包已失效并保留审计记录', '候选医院接收状态仍为待联络确认'],
+  }
+  if (phase === 'approved') return {
+    title: '转运方案 v2 已批准',
+    detail: '人工批准已绑定当前方案版本，任务包仍未发送。',
+    signals: ['红十字会医院仍是候选接收点', '新任务包等待本地模拟发送', '车辆尚未开始按新任务执行'],
+  }
+  if (phase === 'sent-awaiting-ack') return {
+    title: '新转运任务已模拟发送',
+    detail: '任务包 v2 已完成本地模拟发送，当前等待接收单位模拟签收。',
+    signals: ['新路线已绑定任务包 v2', '旧任务包保持失效状态', '车辆尚未开始按新任务执行'],
+  }
+  if (phase === 'acknowledged') return {
+    title: '新转运任务已模拟签收',
+    detail: '接收单位已完成本地模拟签收，等待指挥员启动执行演示。',
+    signals: ['任务包 v2 已被模拟接收', '旧任务包已被新版本替代', '车辆仍停在当前安全位置'],
+  }
+  if (phase === 'en-route') return {
+    title: '救护车正沿候选路线模拟在途',
+    detail: '新任务已进入执行演示，车辆沿红十字会医院路线缓慢移动。',
+    signals: ['市一医院路线保持静态历史参考', '候选路线显示当前模拟执行', '真实接收状态仍不由页面确认'],
+  }
+  return {
+    title: '救护车已模拟抵达候选接收点',
+    detail: '本条转运演示已完成；页面仅保留方案、任务与回执的本地审计状态。',
+    signals: ['方案 v2 已完成本地演示', '接收与回执均非真实生产状态', '可重置后重新演示本条链路'],
+  }
+}
+
 function TrafficPlan({
   state,
   recalculationProgress,
+  onAsk,
+  onPreviewRouteC,
 }: {
   state: ReturnType<typeof createInitialCommandWorkbenchState>['traffic']
   recalculationProgress: number
+  onAsk: (question: string) => void
+  onPreviewRouteC: () => void
 }) {
   const routeCPreview = state.activeRouteId === 'C'
   const replacementIssued = ['sent-awaiting-ack', 'acknowledged', 'en-route', 'arrived'].includes(state.phase)
-
-  if (state.phase === 'recalculating') {
-    return (
-      <>
-        <PlanNotice
-          tone="blue"
-          icon={Route}
-          title="车辆已切换到路线 C 预览"
-          body="地图已按负责人的拖拽选择更新；系统正在重算风险、负责人和任务清单。"
-        />
-        <PlanRecalculationProgress progress={recalculationProgress} scenario="traffic" />
-        <PlanMetrics
-          items={[
-            ['地图状态', '路线 C · 调整预览'],
-            ['车辆状态', '停在拖放位置'],
-            ['任务状态', '尚未下发'],
-            ['人工权限', '新方案生成后确认下发'],
-          ]}
-        />
-      </>
-    )
-  }
+  const decisionCopy = trafficDecisionCopy(state.phase)
+  const trafficMapStatus = state.phase === 'en-route'
+    ? '路线 C · 模拟执行中'
+    : state.phase === 'arrived'
+      ? '路线 C · 模拟抵达'
+      : routeCPreview
+        ? '路线 C · 调整预览'
+        : '路线 B · 执行异常'
+  const trafficPlanStatus = replacementIssued
+    ? '新方案已模拟下发'
+    : state.phase === 'recalculating'
+      ? '新方案生成中'
+      : routeCPreview
+        ? '待负责人确认下发'
+        : '等待地图或右栏调整'
+  const routeCStatus = state.phase === 'blocked'
+    ? '建议优先'
+    : state.phase === 'recalculating'
+      ? '方案生成中'
+      : state.phase === 'awaiting-approval'
+        ? '待确认下发'
+        : state.phase === 'sent-awaiting-ack'
+          ? '已模拟发送'
+          : state.phase === 'acknowledged'
+            ? '已模拟签收'
+            : state.phase === 'en-route'
+              ? '模拟执行中'
+              : '已模拟抵达'
+  const decisionTone = state.phase === 'blocked' ? 'danger' : ['recalculating', 'awaiting-approval'].includes(state.phase) ? 'blue' : 'green'
 
   return (
     <>
-      <PlanNotice
-        tone={routeCPreview ? 'blue' : 'danger'}
-        icon={routeCPreview ? Route : AlertTriangle}
-        title={routeCPreview ? '路线 C 调整方案已生成' : '原最短路线前方受阻'}
-        body={routeCPreview
-          ? '地图预览已经切换；只有负责人确认下发后，接收单位才会收到新任务包。'
-          : '请直接拖动地图上的清障车 02，将车辆放到绿色推荐路线 C。'}
-      />
-
-      <section className="command-plan-section">
-        <SectionHeading icon={Route} title="路线调整" suffix="地图直接操作" />
-        <div className={`command-route-change ${routeCPreview ? 'is-preview' : ''}`}>
-          <div><span style={{ backgroundColor: '#E5484D' }}>B</span><strong>原执行路线</strong><small>前方受阻</small></div>
-          <b aria-hidden="true">→</b>
-          <div><span style={{ backgroundColor: '#30A46C' }}>C</span><strong>推荐改线</strong><small>{routeCPreview ? '已绑定地图预览' : '等待拖放车辆'}</small></div>
+      <DecisionException
+        title={decisionCopy.title}
+        detail={decisionCopy.detail}
+        signals={decisionCopy.signals}
+        onAsk={() => onAsk('请分析中山路道路阻塞异常，比较路线 A、B、C 的收益、风险和任务影响。')}
+        tone={decisionTone}
+        askLabel={state.phase === 'blocked' ? '让助手分析这项异常' : '让助手解释当前状态'}
+      >
+        {state.phase === 'recalculating' && <PlanRecalculationProgress progress={recalculationProgress} scenario="traffic" />}
+        <div className="command-decision-options" role="radiogroup" aria-label="中山路候选路线">
+          <DecisionOption
+            code="A"
+            title="常规路线"
+            meta="12 分钟 · 距离最长"
+            evidence="符合常规通行约束，作为保底参照。"
+            status="常规备选"
+            disabled
+          />
+          <DecisionOption
+            code="B"
+            title="原执行路线"
+            meta="8 分钟 · 前方受阻"
+            evidence="距离最短，但当前不能安全继续。"
+            status={routeCPreview ? '旧路线' : '当前异常'}
+            selected={!routeCPreview}
+            danger
+            disabled
+          />
+          <DecisionOption
+            code="C"
+            title="推荐改线"
+            meta="10 分钟 · 绕开阻塞"
+            evidence="比路线 B 增加 2 分钟，仍比常规路线 A 少 2 分钟。"
+            status={routeCStatus}
+            selected={routeCPreview}
+            recommended
+            disabled={state.phase !== 'blocked'}
+            onClick={onPreviewRouteC}
+            testId="traffic-route-option-c"
+          />
         </div>
-      </section>
+      </DecisionException>
 
       <PlanMetrics
         items={[
-          ['地图预览', routeCPreview ? '路线 C · 已切换' : '路线 B · 执行异常'],
-          ['方案状态', replacementIssued ? '新方案已下发' : routeCPreview ? '待负责人确认下发' : '等待地图调整'],
+          ['地图状态', trafficMapStatus],
+          ['方案状态', trafficPlanStatus],
           ['道路状态', routeCPreview ? '已绕开受阻路段' : '原路线不可继续'],
           ['执行单位', state.phase === 'arrived' ? '清障车 02 · 已抵达' : '清障车 02 · 模拟'],
         ]}
@@ -549,58 +985,94 @@ function PlanRecalculationProgress({
 function MedicalPlan({
   state,
   recalculationProgress,
+  onAsk,
+  onPreviewRedCross,
 }: {
   state: ReturnType<typeof createInitialCommandWorkbenchState>['medical']
   recalculationProgress: number
+  onAsk: (question: string) => void
+  onPreviewRedCross: () => void
 }) {
   const redCrossSelected = state.selectedFacilityId === 'facility-red-cross'
   const replacementAccepted = ['acknowledged', 'en-route', 'arrived'].includes(state.phase)
-
-  if (state.phase === 'recalculating') {
-    return (
-      <>
-        <PlanNotice
-          tone="blue"
-          icon={Route}
-          title="救护车已切换到红十字会医院路线预览"
-          body="地图已按负责人的拖拽选择更新；系统正在重算 ETA、风险、联络负责人和任务清单。"
-        />
-        <PlanRecalculationProgress progress={recalculationProgress} scenario="medical" />
-        <PlanMetrics
-          items={[
-            ['地图状态', '红十字会医院路线 · 调整预览'],
-            ['车辆状态', '停在拖放位置'],
-            ['任务状态', '旧任务尚未失效'],
-            ['人工权限', '新方案生成后批准与下发'],
-          ]}
-        />
-      </>
-    )
-  }
+  const decisionCopy = medicalDecisionCopy(state.phase)
+  const replacementConfirmed = ['approved', 'sent-awaiting-ack', 'acknowledged', 'en-route', 'arrived'].includes(state.phase)
+  const medicalMapStatus = state.phase === 'en-route'
+    ? '红十字会路线 · 模拟执行中'
+    : state.phase === 'arrived'
+      ? '红十字会路线 · 模拟抵达'
+      : redCrossSelected
+        ? '红十字会路线 · 调整预览'
+        : '市一医院路线 · 执行异常'
+  const medicalPlanStatus = state.phase === 'approved'
+    ? '已批准，待模拟发送'
+    : state.phase === 'sent-awaiting-ack'
+      ? '已模拟发送，待签收'
+      : replacementAccepted
+        ? '新转运方案执行链已确认'
+        : redCrossSelected
+          ? state.phase === 'recalculating' ? '新方案生成中' : '待负责人批准'
+          : '等待地图或右栏调整'
+  const redCrossStatus = state.phase === 'blocked'
+    ? '候选 · 待联络'
+    : state.phase === 'recalculating'
+      ? '方案生成中'
+      : state.phase === 'awaiting-approval'
+        ? '待人工批准'
+        : state.phase === 'approved'
+          ? '已批准 · 待发送'
+          : state.phase === 'sent-awaiting-ack'
+            ? '已模拟发送'
+            : state.phase === 'acknowledged'
+              ? '已模拟签收'
+              : state.phase === 'en-route'
+                ? '模拟执行中'
+                : '已模拟抵达'
+  const decisionTone = state.phase === 'blocked' ? 'danger' : ['recalculating', 'awaiting-approval'].includes(state.phase) ? 'blue' : 'green'
 
   return (
     <>
-      <PlanNotice
-        tone="danger"
-        icon={ShieldAlert}
-        title="市一医院接收能力下降"
-        body="该状态为模拟的结构化回传，不展示或推断真实床位、专科能力与临床分级。"
-      />
-
-      <section className="command-plan-section">
-        <SectionHeading icon={MapPin} title="接收点调整" suffix="公开静态 POI" />
-        <div className="command-facility-list">
-          <article className="is-unavailable"><div><strong>广州市第一人民医院</strong><span>原目标 · 接收能力下降</span></div><b>6 分钟</b></article>
-          <article className={redCrossSelected ? 'is-selected' : ''}><div><strong>广州市红十字会医院</strong><span>候选目标 · 接收状态待联络</span></div><b>10 分钟</b></article>
+      <DecisionException
+        title={decisionCopy.title}
+        detail={decisionCopy.detail}
+        signals={decisionCopy.signals}
+        onAsk={() => onAsk('请分析盘福路医疗协同异常，比较市一医院与红十字会医院，并列出需要人工联络核实的事项。')}
+        tone={decisionTone}
+        askLabel={state.phase === 'blocked' ? '让助手分析这项异常' : '让助手解释当前状态'}
+      >
+        {state.phase === 'recalculating' && <PlanRecalculationProgress progress={recalculationProgress} scenario="medical" />}
+        <div className="command-decision-options" role="radiogroup" aria-label="盘福路候选接收点">
+          <DecisionOption
+            code="医"
+            title="广州市第一人民医院"
+            meta="6 分钟 · 原接收点"
+            evidence="当前模拟回传显示接收能力下降，不能直接沿用。"
+            status={redCrossSelected ? '原接收点' : '当前异常'}
+            selected={!redCrossSelected}
+            danger
+            disabled
+          />
+          <DecisionOption
+            code="医"
+            title="广州市红十字会医院"
+            meta="10 分钟 · 候选接收点"
+            evidence="公开静态 POI；接收能力与联络状态仍待人工确认。"
+            status={redCrossStatus}
+            selected={redCrossSelected}
+            recommended
+            disabled={state.phase !== 'blocked'}
+            onClick={onPreviewRedCross}
+            testId="medical-facility-option-red-cross"
+          />
         </div>
-      </section>
+      </DecisionException>
 
       <PlanMetrics
         items={[
-          ['地图预览', redCrossSelected ? '红十字会医院路线 · 已切换' : '市一医院路线 · 执行异常'],
-          ['方案状态', replacementAccepted ? '新转运方案执行中' : redCrossSelected ? '待负责人批准与下发' : '等待地图调整'],
+          ['地图状态', medicalMapStatus],
+          ['方案状态', medicalPlanStatus],
           ['执行单位', '救护车 AMB-02 · 保留'],
-          ['联络负责人', replacementAccepted ? '转运协调负责人' : redCrossSelected ? '候选：转运协调负责人' : '急救联络负责人'],
+          ['联络负责人', replacementConfirmed ? '转运协调负责人' : redCrossSelected ? '候选：转运协调负责人' : '急救联络负责人'],
         ]}
       />
 
@@ -756,19 +1228,19 @@ function CommandApprovalFooter({
     return <footer className="command-approval-footer is-muted"><LockKeyhole size={14} /><span>本工作面尚未进入执行演示，不会产生任务。</span></footer>
   }
   if (scenario === 'traffic' && phase === 'blocked') {
-    return <footer className="command-approval-footer is-muted"><Route size={14} /><span>请在地图上按住清障车 02，拖到绿色路线 C。</span></footer>
+    return <footer className="command-approval-footer is-muted"><Route size={14} /><span>可在地图拖动清障车 02，或在右栏选择绿色路线 C。</span></footer>
   }
   if (scenario === 'traffic' && phase === 'recalculating') {
     return <footer className="command-approval-footer is-muted"><LoaderCircle size={14} /><span>地图已切换，正在生成新的方案与任务草案。</span></footer>
   }
   if (scenario === 'medical' && phase === 'blocked') {
-    return <footer className="command-approval-footer is-muted"><Route size={14} /><span>请在地图上按住救护车 AMB-02，拖到青色候选路线。</span></footer>
+    return <footer className="command-approval-footer is-muted"><Route size={14} /><span>可在地图拖动救护车 AMB-02，或在右栏选择候选接收点。</span></footer>
   }
   if (scenario === 'medical' && phase === 'recalculating') {
     return <footer className="command-approval-footer is-muted"><LoaderCircle size={14} /><span>地图已切换，正在生成新的转运方案与任务草案。</span></footer>
   }
   const action = phase === 'awaiting-approval'
-        ? { label: scenario === 'traffic' ? '负责人确认并下发改线 v2' : '人工批准 转运 v2', icon: LockKeyhole }
+        ? { label: scenario === 'traffic' ? '负责人确认并模拟下发改线 v2' : '人工批准 转运 v2', icon: LockKeyhole }
         : phase === 'approved'
           ? { label: '模拟发送任务包', icon: Send }
           : phase === 'sent-awaiting-ack'
@@ -788,12 +1260,42 @@ function CommandApprovalFooter({
   )
 }
 
-function advisorResponse(scenario: CommandScenarioId, text: string) {
-  if (scenario === 'traffic') {
-    if (text.includes('比较') || text.includes('路线')) return '三条路线的时间已直接标在线路上方。路线 B 已受阻，路线 C 绕开阻塞且短于常规路线 A；拖动车辆只改变地图预览，新方案仍需负责人确认下发。'
-    return '核心参数从路线 B 改为 C 后，旧批准与任务包不能自动继承，否则接收单位可能同时看到两条冲突指令。'
+function advisorBoundaryForScenario(scenario: CommandScenarioId) {
+  if (scenario === 'traffic') return '道路几何来自公开底图；阻塞、车辆、ETA、任务与回执均为本地模拟。我只解释、比较并整理草案，不批准、不发送、不移动车辆。'
+  if (scenario === 'medical') return '医院名称与坐标为公开静态 POI；接收能力、车辆、ETA、调派与回执均为模拟或待联络确认。我不作临床判断，也不确认医院可接收。'
+  return '我可以解释页面信息、比较影响并整理草案；不会批准、发送或直接调度资源。'
+}
+
+function advisorPromptsForScenario(scenario: CommandScenarioId) {
+  if (scenario === 'traffic') return ['解释当前异常', '比较 A/B/C 路线', '说明改线任务影响', '整理路线 C 草案']
+  if (scenario === 'medical') return ['解释接收异常', '比较两个接收点', '列出联络核实项', '整理转运调整草案']
+  if (scenario === 'city-order') return ['区分待核实证据', '整理 AI Brief 草案']
+  return ['解释当前状态', '整理影响清单']
+}
+
+function advisorResponse(
+  scenario: CommandScenarioId,
+  text: string,
+  context: {
+    trafficRouteId: 'B' | 'C'
+    medicalFacilityId: 'facility-shiyi' | 'facility-red-cross'
+    phase: CommandPhase | null
+  },
+) {
+  if (/(提示词|prompt|密钥|api\s*key|系统配置)/i.test(text)) {
+    return '我不能提供系统提示词、密钥或内部配置。可以继续围绕当前事件做异常研判、方案比较、影响分析或调整草案。'
   }
-  if (scenario === 'medical') return '拖动救护车会立即把地图预览切换到红十字会医院路线，并生成新的 ETA、风险与任务草案；红十字会医院状态仍需人工联络确认，方案下发仍需负责人批准。'
+  if (scenario === 'traffic') {
+    if (text.includes('比较') || text.includes('路线')) return '页面策略预设为：A 12 分钟，是距离最长的常规路线；B 8 分钟，距离最短但前方受阻；C 10 分钟，绕开阻塞且仍比 A 少 2 分钟。当前地图显示的是路线 ' + context.trafficRouteId + (context.trafficRouteId === 'C' ? ' 调整预览，尚未下发。' : ' 的受阻状态。')
+    if (text.includes('影响') || text.includes('草案')) return '从 B 改为 C 会同步重算 ETA、风险和任务清单，并使旧批准与旧任务包失效。助手只能整理待确认草案；负责人仍需在右栏执行人工确认下发。'
+    return '当前异常是路线 B 前方受阻。应先核实阻塞范围、预计恢复时间和路线 C 的可通行条件；页面车辆位置、ETA 和回执均为本地模拟。'
+  }
+  if (scenario === 'medical') {
+    if (text.includes('比较') || text.includes('接收点')) return '市一医院是原接收点，页面模拟 ETA 为 6 分钟，但当前回传显示接收能力下降；红十字会医院是公开静态 POI，页面模拟 ETA 为 10 分钟，真实接收能力与联络状态仍未知。当前地图显示' + (context.medicalFacilityId === 'facility-red-cross' ? '红十字会医院调整预览，尚未批准下发。' : '市一医院原路线的异常状态。')
+    if (text.includes('核实') || text.includes('联络')) return '需要人工核实候选医院当前接收能力、急诊联络人、预计交接窗口、车辆到达后的接收点位，以及途中风险变化；系统不会替代临床分级或接收确认。'
+    if (text.includes('影响') || text.includes('草案')) return '更换接收点会重算路线、ETA、联络负责人和任务清单，旧批准与旧任务包不能自动继承。我可以整理待批准草案，但不会批准或发送。'
+    return '当前是模拟的医疗协同回传异常，不代表真实床位或专科能力。应先核实原接收点状态，再比较候选接收点及转运影响。'
+  }
   if (scenario === 'city-order') return '先核实图片、语音和视频是否指向同一处通道；待核实证据不应直接改变处置方案。'
-  return `我可以为“${text}”整理草案和影响清单，但需要指挥员在地图和动态方案区人工确认。`
+  return `我可以为“${text}”整理草案和影响清单，但需要指挥员在地图与右栏完成确定性操作。当前阶段为 ${context.phase ?? '只读草案'}。`
 }
