@@ -7,6 +7,7 @@ import {
   type DispatchOperation,
 } from './dispatchData'
 import type { ActiveDispatchEvent } from './activeEventDispatchModel'
+import { orderDispatchEventIds } from './resourceDispatchOrder'
 
 export function ResourceDispatchRail({
   selectedEventId,
@@ -21,11 +22,9 @@ export function ResourceDispatchRail({
 }) {
   const adjusted = DISPATCH_CASES.filter((item) => ['approved', 'sent'].includes(operations[item.eventId]?.status))
   const active = DISPATCH_CASES.filter((item) => !adjusted.includes(item))
-  const orderedActive = [...active].sort((left, right) => {
-    if (left.eventId === selectedEventId) return -1
-    if (right.eventId === selectedEventId) return 1
-    return 0
-  })
+  const activeById = new Map(active.map((item) => [item.eventId, item]))
+  const orderedActive = orderDispatchEventIds(active.map((item) => item.eventId), selectedEventId)
+    .map((eventId) => activeById.get(eventId)!)
   const pinnedEvent = currentEvent && !DISPATCH_CASES.some((item) => item.eventId === currentEvent.id)
     ? currentEvent
     : null

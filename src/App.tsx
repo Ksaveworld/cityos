@@ -23,7 +23,10 @@ import { ResourceDispatchPanel } from '@/components/dashboard/dispatch/ResourceD
 import { ResourceDispatchWorkspace } from '@/components/dashboard/dispatch/ResourceDispatchWorkspace'
 import { CommandWorkbench } from '@/components/dashboard/dispatch/CommandWorkbench'
 import type { CommandScenarioId } from '@/components/dashboard/dispatch/commandWorkbenchModel'
-import type { ActiveDispatchEvent } from '@/components/dashboard/dispatch/ActiveEventDispatch'
+import {
+  ActiveEventDispatchContext,
+  type ActiveDispatchEvent,
+} from '@/components/dashboard/dispatch/ActiveEventDispatch'
 import {
   DISPATCH_CASES,
   DISPATCH_FACILITIES,
@@ -101,6 +104,15 @@ const RIGHT_PANEL_MIN_WIDTH = 360
 const RIGHT_PANEL_MAX_RATIO = 0.46
 const RIGHT_PANEL_KEYBOARD_STEP = 16
 const BASE_ENROUTE_UNIT_COUNT = DISPATCH_UNITS.filter((unit) => unit.status === 'enroute').length
+const COMMAND_WORKBENCH_EVENT_IDS = new Set([
+  'ev-traffic-zhongshan',
+  'ev-medical-panfu',
+  'ev-city-order-beijing',
+])
+
+function usesCommandWorkbench(event: ActiveDispatchEvent | null): event is ActiveDispatchEvent {
+  return Boolean(event?.kind === 'daily' && COMMAND_WORKBENCH_EVENT_IDS.has(event.id))
+}
 
 function commandScenarioMapVariant(scenarioId: CommandScenarioId): ScenarioMapVariant | null {
   if (scenarioId === 'traffic') return 'traffic'
@@ -1225,6 +1237,8 @@ function LegacyApp() {
     }
     return null
   })()
+  const commandWorkbenchEvent = usesCommandWorkbench(activeDispatchEvent) ? activeDispatchEvent : null
+  const legacyDispatchEvent = activeDispatchEvent && !commandWorkbenchEvent ? activeDispatchEvent : null
   const selectedDispatchCase = getDispatchCase(selectedDispatchEventId)
   const selectedDispatchAssignment = selectedDispatchEventId ? dispatchAssignments[selectedDispatchEventId] : null
   const selectedDispatchOperation = selectedDispatchEventId ? dispatchOperations[selectedDispatchEventId] : null
@@ -1336,9 +1350,9 @@ function LegacyApp() {
         )}
 
         {workspace === 'resources' ? (
-          activeDispatchEvent ? (
+          commandWorkbenchEvent ? (
             <CommandWorkbench
-              event={activeDispatchEvent}
+              event={commandWorkbenchEvent}
               renderMap={(commandScenario, commandMap) => (
                 <CityMap
                   site={scenario.site}
@@ -1381,7 +1395,7 @@ function LegacyApp() {
                 operations={dispatchOperations}
                 sessions={workflowSessions}
                 entryNotice={dispatchEntryNotice}
-                workflowEvent={activeDispatchEvent}
+                workflowEvent={legacyDispatchEvent}
                 selectedResolutionOptionId={dispatchResolutionOptionId}
                 promptRequest={dispatchPromptRequest}
                 onOpen={openDispatchEvent}
@@ -1501,6 +1515,16 @@ function LegacyApp() {
             onApprove={approveDispatchAdjustment}
             onSend={sendDispatchTasks}
             onClose={closeDispatchEvent}
+          />
+        )}
+
+        {workspace === 'resources' && legacyDispatchEvent && (
+          <ActiveEventDispatchContext
+            event={legacyDispatchEvent}
+            onAsk={(text) => setDispatchPromptRequest({ id: crypto.randomUUID(), text })}
+            onApplyResolution={applyDispatchResolution}
+            selectedOptionId={dispatchResolutionOptionId}
+            onSelectOption={setDispatchResolutionOptionId}
           />
         )}
 
