@@ -190,6 +190,21 @@ export interface WorkflowSession {
   decisionNote: string
 }
 
+/**
+ * 方案报告中允许人工调整的结构化字段。
+ *
+ * 报告编辑器只提交这些已经接入重算、任务包和版本门禁的字段；证据、报告编号、
+ * 负责人和审计记录仍由当前会话派生，避免出现“页面上能改、下游却没有变化”的假编辑。
+ */
+export interface PlanReportEdits {
+  selectedPlanId: string
+  resourceCount: number
+  fireOptionId: string
+  medicalOptionId: string
+  trafficOptionId: string
+  decisionNote: string
+}
+
 export interface RecalculatedMetrics {
   etaMinutes: number
   coverageRisk: string

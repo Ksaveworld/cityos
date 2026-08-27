@@ -24,6 +24,7 @@ import { CommandTaskPackageCard, resolveAssignments, TaskPackageCard } from './A
 import {
   adjustWorkflow,
   advanceDelivery,
+  applyPlanReportEdits,
   approveWorkflow,
   markDeliveryAbnormal,
   runControlledRetry,
@@ -32,7 +33,7 @@ import {
   validateInput,
   workflowTimestamp,
 } from './state'
-import type { BriefCorrections, BriefItem, DataLabel, DomainFixture, InputMode, WorkflowSession } from './types'
+import type { BriefCorrections, BriefItem, DataLabel, DomainFixture, InputMode, PlanReportEdits, WorkflowSession } from './types'
 
 const IncidentReportOverlay = lazy(() => import('../report/IncidentReportOverlay'))
 type ReportView = 'brief' | 'plan' | 'command-task' | 'task' | 'result'
@@ -72,6 +73,7 @@ export function WorkflowSimulationPanel({
   const [reportView, setReportView] = useState<ReportView | null>(null)
   const [reportPlanId, setReportPlanId] = useState<string | null>(null)
   const [reportGeneratedAt, setReportGeneratedAt] = useState('')
+  const [reportInitiallyEditing, setReportInitiallyEditing] = useState(false)
   const reportTriggerRef = useRef<HTMLElement | null>(null)
   const normalizedStep = Math.min(8, Math.max(0, activeStep === 5 ? 4 : activeStep))
   const selectedPlan = fixture.plans.find((plan) => plan.id === session.selectedPlanId) ?? fixture.plans[0]
@@ -81,6 +83,7 @@ export function WorkflowSimulationPanel({
     setReportView(null)
     setReportPlanId(null)
     setReportGeneratedAt('')
+    setReportInitiallyEditing(false)
     requestAnimationFrame(() => {
       if (trigger?.isConnected) trigger.focus()
     })
@@ -94,12 +97,36 @@ export function WorkflowSimulationPanel({
     setReportGeneratedAt(reportTimestamp())
     setReportView(view)
   }
-  const openPlanReport = (planId: string) => {
+  const openPlanReport = (planId: string, initiallyEditing = false) => {
     rememberReportTrigger()
     setReportPlanId(planId)
     setReportGeneratedAt(reportTimestamp())
+    setReportInitiallyEditing(initiallyEditing)
     setReportView('plan')
   }
+  const applyReportEdits = useCallback((edits: PlanReportEdits) => {
+    if (['delivered', 'acknowledged', 'executing', 'completed'].includes(session.deliveryStatus)) return
+    const next = applyPlanReportEdits(fixture, session, edits)
+    if (next === session) return
+    onChange(next)
+    setReportPlanId(next.selectedPlanId)
+    setReportGeneratedAt(reportTimestamp())
+    setReportInitiallyEditing(false)
+    onStepChange(4)
+  }, [fixture, onChange, onStepChange, session])
+  const approveReportPlan = useCallback((planId: string) => {
+    if (['delivered', 'acknowledged', 'executing', 'completed'].includes(session.deliveryStatus)) return
+    const switchedApproval = session.approvedVersion === session.planVersion
+      && session.approvedPlanId !== null
+      && session.approvedPlanId !== planId
+    const selected = selectPlan(session, planId)
+    const next = approveWorkflow(switchedApproval ? { ...selected, decisionNote: '' } : selected)
+    onChange(next)
+    setReportPlanId(planId)
+    setReportGeneratedAt(reportTimestamp())
+    setReportInitiallyEditing(false)
+    onStepChange(6)
+  }, [onChange, onStepChange, session])
 
   const report = reportView ? createPortal((
     <Suspense fallback={<div className="fixed inset-0 z-[80] grid place-items-center bg-white/90 text-body text-ink-2">正在生成报告版式…</div>}>
@@ -109,6 +136,9 @@ export function WorkflowSimulationPanel({
         selectedPlan={reportPlan}
         view={reportView}
         generatedAt={reportGeneratedAt}
+        initiallyEditing={reportInitiallyEditing}
+        onApplyPlanEdits={applyReportEdits}
+        onApprovePlan={approveReportPlan}
         onClose={closeReport}
       />
     </Suspense>
@@ -362,9 +392,8 @@ function StrategyPanel({
   session: WorkflowSession
   onChange: (session: WorkflowSession) => void
   onStepChange: (step: number) => void
-  onOpenPlanReport: (planId: string) => void
+  onOpenPlanReport: (planId: string, initiallyEditing?: boolean) => void
 }) {
-  const [editingPlanId, setEditingPlanId] = useState<string | null>(null)
   if (!session.inputValidated) {
     return <GateCard title="尚未生成可比较方案" detail="请先校验事件输入，再进入 A/B 方案和人工批准。" action="返回输入" onAction={() => onStepChange(0)} />
   }
@@ -385,6 +414,7 @@ function StrategyPanel({
   }
   const isCurrentApproval = session.approvedPlanId === session.selectedPlanId && session.approvedVersion === session.planVersion
   const approvalLocked = session.deliveryStatus !== 'draft' && session.deliveryStatus !== 'pending-send'
+  const reportEditLocked = ['delivered', 'acknowledged', 'executing', 'completed'].includes(session.deliveryStatus)
   const fastestEta = Math.min(...fixture.plans.map((plan) => plan.etaMinutes))
 
   // 顺序固定：消防调度 → 医疗调度 → 路况协同。不按场景重排，也不按场景改名。
@@ -474,6 +504,9 @@ function StrategyPanel({
           {fixture.plans.map((plan) => {
             const approved = plan.id === session.approvedPlanId && session.approvedVersion === session.planVersion
             const etaPriority = plan.etaMinutes === fastestEta
+            const planIsCurrent = plan.id === session.selectedPlanId
+            const displayedEta = planIsCurrent ? session.etaMinutes : plan.etaMinutes
+            const displayedRisk = planIsCurrent ? session.coverageRisk : plan.coverageRisk
             const switchesApprovedPlan = session.approvedVersion === session.planVersion
               && session.approvedPlanId !== null
               && session.approvedPlanId !== plan.id
@@ -490,21 +523,12 @@ function StrategyPanel({
                       {approved && <span className="inline-flex items-center gap-1 rounded bg-[#EAF8F1] px-1.5 py-0.5 text-footnote font-semibold text-[#237A52]"><Check size={10} />人工已批准</span>}
                     </span>
                   </div>
-                  <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-footnote text-ink-3"><span>预计到场 {plan.etaMinutes.toFixed(1)} 分钟</span><span>资源覆盖风险 {plan.coverageRisk}</span></div>
+                  <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-footnote text-ink-3"><span>预计到场 {displayedEta.toFixed(1)} 分钟{planIsCurrent ? ' · 当前重算' : ''}</span><span>资源覆盖风险 {displayedRisk}</span></div>
                   <div className="mt-2 grid grid-cols-3 gap-1.5">
                     <button type="button" aria-label={`查看方案 ${plan.label} 详情`} onClick={() => onOpenPlanReport(plan.id)} className="flex h-8 items-center justify-center gap-1 rounded-lg border border-line bg-surface-card px-1 text-[10px] font-semibold text-ink-1 hover:bg-sunken"><FileText size={11} />查看方案详情</button>
-                    <button type="button" aria-label={`修改方案 ${plan.label} 报告`} onClick={() => { setEditingPlanId(plan.id); if (session.selectedPlanId !== plan.id) onChange({ ...selectPlan(session, plan.id), decisionNote: '' }) }} className="flex h-8 items-center justify-center gap-1 rounded-lg border border-[#C9DBF8] bg-[#F7FAFF] px-1 text-[10px] font-semibold text-[#2768CA] hover:bg-[#EEF4FF]"><PencilLine size={11} />修改报告</button>
+                    <button type="button" aria-label={`修改方案 ${plan.label} 报告`} disabled={reportEditLocked} onClick={() => onOpenPlanReport(plan.id, true)} title={reportEditLocked ? '任务已进入执行或办结，当前版本不可直接编辑' : undefined} className="flex h-8 items-center justify-center gap-1 rounded-lg border border-[#C9DBF8] bg-[#F7FAFF] px-1 text-[10px] font-semibold text-[#2768CA] hover:bg-[#EEF4FF] disabled:cursor-not-allowed disabled:border-line disabled:bg-page disabled:text-ink-3"><PencilLine size={11} />修改报告</button>
                     <button type="button" aria-label={`人工批准方案 ${plan.label}`} disabled={approved || approvalLocked} onClick={() => { const next = selectPlan(session, plan.id); onChange(approveWorkflow(switchesApprovedPlan ? { ...next, decisionNote: '' } : next)); onStepChange(6) }} className="h-8 rounded-lg bg-accent-strong px-1 text-[10px] font-semibold text-white hover:bg-[#4D4DC2] disabled:bg-line disabled:text-ink-3">{approved ? '已人工批准' : '人工批准此方案'}</button>
                   </div>
-                  {editingPlanId === plan.id && (
-                    <div className="mt-2 rounded-lg border border-[#C9DBF8] bg-[#F7FAFF] p-2">
-                      <label className="block">
-                        <span className="mb-1 block text-footnote font-semibold text-[#315B98]">报告修改说明</span>
-                        <textarea value={session.decisionNote} onChange={(event) => onChange({ ...session, selectedPlanId: plan.id, decisionNote: event.target.value })} rows={2} placeholder="填写人工修订内容和方案选择依据" className="w-full resize-none rounded-lg border border-[#C9DBF8] bg-white px-2 py-1.5 text-label leading-relaxed text-ink-1 outline-none focus:border-[#2768CA]" />
-                      </label>
-                      <button type="button" onClick={() => setEditingPlanId(null)} className="mt-1.5 h-7 w-full rounded-lg bg-[#2768CA] text-footnote font-semibold text-white hover:bg-[#205CB1]">保存报告修改</button>
-                    </div>
-                  )}
                 </EventCard>
               </div>
             )
@@ -512,12 +536,16 @@ function StrategyPanel({
         </div>
         {approvalLocked && <p className="mt-1.5 text-footnote leading-relaxed text-[#8A5A14]">当前任务已进入下发或执行；需先否决当前版本或调整投入规模，才能批准新版本。</p>}
       </div>
-      <label className="block">
-        <span className="mb-1 block text-label font-semibold text-ink-1">人工决策说明（可选）</span>
-        <textarea readOnly={isCurrentApproval} value={session.decisionNote} onChange={(event) => onChange({ ...session, decisionNote: event.target.value })} rows={2} className="w-full resize-none rounded-lg border border-line bg-white px-2 py-1.5 text-label leading-relaxed text-ink-1 outline-none focus:border-accent-strong read-only:cursor-not-allowed read-only:bg-sunken read-only:text-ink-2" />
-        {isCurrentApproval && <span className="mt-1 block text-footnote text-ink-3">该说明已随当前批准版本冻结；否决或调整投入规模后可重新填写。</span>}
-      </label>
-      {/* 方案卡只保留两条清晰路径：查看该方案的可打印报告，或直接人工批准该方案。 */}
+      <EventCard variant="sunken">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-label font-semibold text-ink-1">人工决策说明</span>
+          <span className="text-footnote font-semibold text-[#2768CA]">在方案报告内编辑</span>
+        </div>
+        <p className="mt-1 text-label leading-relaxed text-ink-2">
+          {session.decisionNote || '未填写；点击方案卡中的“修改报告”，在报告页内补充。'}
+        </p>
+      </EventCard>
+      {/* 方案卡提供查看报告、在报告内修改，以及独立人工批准三条路径。 */}
       <button type="button" onClick={() => onChange({ ...session, approvedPlanId: null, approvedVersion: null, deliveryStatus: 'draft', planVersion: session.planVersion + 1, versionUpdatedAt: workflowTimestamp(), executionStartedAt: null, firstArrivalAt: null, executionCompletedAt: null, hasReplanned: session.hasReplanned || session.deliveryStatus === 'abnormal', invalidationReason: '人工否决当前候选方案，已要求重新生成。' })} className="h-8 w-full rounded-lg border border-[#F2CBCD] bg-[#FDF0F0] text-label font-semibold text-[#A3373C] hover:bg-[#FBE5E5]">否决并要求重新生成</button>
       {isCurrentApproval && <p className="text-footnote leading-relaxed text-[#237A52]">当前版本已由人工批准；任务下发状态可在本页继续查看。</p>}
     </div>

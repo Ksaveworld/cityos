@@ -1,4 +1,4 @@
-import type { DomainFixture, RecalculatedMetrics, TaskDispatchOverride, WorkflowSession } from './types'
+import type { DomainFixture, PlanReportEdits, RecalculatedMetrics, TaskDispatchOverride, WorkflowSession } from './types'
 
 export function workflowTimestamp() {
   return new Intl.DateTimeFormat('zh-CN', {
@@ -178,6 +178,59 @@ export function adjustWorkflow(
     invalidationReason: session.approvedPlanId
       ? '调度维度已修改；原批准和任务包已失效。'
       : null,
+  }
+}
+
+/**
+ * 将报告编辑器的一份本地草案作为一次原子变更提交。
+ * 输入控件变化时不要直接调用本函数；否则 range / select 的每次 change 都会生成新版本。
+ */
+export function applyPlanReportEdits(
+  fixture: DomainFixture,
+  session: WorkflowSession,
+  edits: PlanReportEdits,
+): WorkflowSession {
+  if (['delivered', 'acknowledged', 'executing', 'completed'].includes(session.deliveryStatus)) return session
+
+  const selectedPlanId = fixture.plans.some((plan) => plan.id === edits.selectedPlanId)
+    ? edits.selectedPlanId
+    : session.selectedPlanId
+  const requestedResourceCount = Number.isFinite(edits.resourceCount) ? Math.round(edits.resourceCount) : session.resourceCount
+  const resourceCount = Math.min(
+    fixture.maxResources,
+    Math.max(fixture.minResources, requestedResourceCount),
+  )
+  const validOption = (lever: DomainFixture['fireDispatch'], candidate: string, fallback: string) =>
+    lever.options.some((option) => option.id === candidate) ? candidate : fallback
+  const normalized: PlanReportEdits = {
+    selectedPlanId,
+    resourceCount,
+    fireOptionId: validOption(fixture.fireDispatch, edits.fireOptionId, session.fireOptionId),
+    medicalOptionId: validOption(fixture.medicalDispatch, edits.medicalOptionId, session.medicalOptionId),
+    trafficOptionId: validOption(fixture.trafficDispatch, edits.trafficOptionId, session.trafficOptionId),
+    decisionNote: edits.decisionNote.trim(),
+  }
+  const changed = normalized.selectedPlanId !== session.selectedPlanId
+    || normalized.resourceCount !== session.resourceCount
+    || normalized.fireOptionId !== session.fireOptionId
+    || normalized.medicalOptionId !== session.medicalOptionId
+    || normalized.trafficOptionId !== session.trafficOptionId
+    || normalized.decisionNote !== session.decisionNote
+  if (!changed) return session
+
+  const adjusted = adjustWorkflow(fixture, session, {
+    resourceCount: normalized.resourceCount,
+    fireOptionId: normalized.fireOptionId,
+    medicalOptionId: normalized.medicalOptionId,
+    trafficOptionId: normalized.trafficOptionId,
+  })
+  return {
+    ...adjusted,
+    selectedPlanId: normalized.selectedPlanId,
+    decisionNote: normalized.decisionNote,
+    invalidationReason: session.approvedPlanId
+      ? '方案报告核心字段已修改；原批准和任务包已失效。'
+      : adjusted.invalidationReason,
   }
 }
 
