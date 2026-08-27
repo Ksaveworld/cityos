@@ -1,9 +1,14 @@
 export type TrafficStrategyRouteId = 'A' | 'B' | 'C'
+export type TrafficSelectableRouteId = Exclude<TrafficStrategyRouteId, 'B'>
 export type TrafficStrategyRouteRole = 'second-alternative' | 'current-blocked' | 'recommended'
+export type TrafficExecutionRouteRole = 'primary' | 'secondary' | 'medical'
 
 export interface TrafficStrategyRoute {
   id: TrafficStrategyRouteId
   role: TrafficStrategyRouteRole
+  selectable: boolean
+  executionRouteRole: TrafficExecutionRouteRole
+  defaultProgress: number
   title: string
   etaMinutes: number
   etaLabel: string
@@ -82,6 +87,9 @@ export const TRAFFIC_STRATEGY_ROUTES: readonly TrafficStrategyRoute[] = [
   {
     id: 'A',
     role: 'second-alternative',
+    selectable: true,
+    executionRouteRole: 'primary',
+    defaultProgress: 0.36,
     title: '第二备选路线',
     etaMinutes: 11,
     etaLabel: 'ETA 约 11 分钟（演示估算）',
@@ -100,6 +108,9 @@ export const TRAFFIC_STRATEGY_ROUTES: readonly TrafficStrategyRoute[] = [
   {
     id: 'B',
     role: 'current-blocked',
+    selectable: false,
+    executionRouteRole: 'secondary',
+    defaultProgress: 0.12,
     title: '当前执行路线',
     etaMinutes: 8,
     etaLabel: '原 ETA 约 8 分钟（演示估算）',
@@ -113,6 +124,9 @@ export const TRAFFIC_STRATEGY_ROUTES: readonly TrafficStrategyRoute[] = [
   {
     id: 'C',
     role: 'recommended',
+    selectable: true,
+    executionRouteRole: 'medical',
+    defaultProgress: 0.43,
     title: '系统推荐路线',
     etaMinutes: 10,
     etaLabel: 'ETA 约 10 分钟（演示估算）',
@@ -131,4 +145,14 @@ export function getTrafficStrategyRoute(id: TrafficStrategyRouteId): TrafficStra
   const route = TRAFFIC_STRATEGY_ROUTES.find((candidate) => candidate.id === id)
   if (!route) throw new Error(`未知交通策略路线：${id}`)
   return route
+}
+
+export function isTrafficSelectableRouteId(id: TrafficStrategyRouteId): id is TrafficSelectableRouteId {
+  return getTrafficStrategyRoute(id).selectable
+}
+
+export function getSelectableTrafficStrategyRoutes(): Array<TrafficStrategyRoute & { id: TrafficSelectableRouteId }> {
+  return TRAFFIC_STRATEGY_ROUTES.filter(
+    (route): route is TrafficStrategyRoute & { id: TrafficSelectableRouteId } => route.selectable,
+  )
 }

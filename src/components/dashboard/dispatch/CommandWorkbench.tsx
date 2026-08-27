@@ -36,7 +36,7 @@ import {
 } from 'lucide-react'
 
 import { CommandTacticalMap } from './CommandTacticalMap'
-import type { CommandMedicalRouteDrop } from './CommandMapInteractionContext'
+import type { CommandMedicalRouteDrop, CommandTrafficRouteDrop } from './CommandMapInteractionContext'
 import type { ExecutionFrame } from '@/components/dashboard/execution/executionPlayback'
 import {
   DISPATCH_FACILITIES,
@@ -63,7 +63,11 @@ import {
 } from './commandWorkbenchModel'
 import {
   getTrafficStrategyRoute,
+  isTrafficSelectableRouteId,
   TRAFFIC_STRATEGY_ROUTES,
+  type TrafficSelectableRouteId,
+  type TrafficStrategyRoute,
+  type TrafficStrategyRouteId,
 } from './trafficStrategyRoutes'
 import './CommandWorkbench.css'
 
@@ -152,11 +156,12 @@ export const CommandWorkbench = memo(function CommandWorkbench({ event, renderMa
       : { label: '草案边界', tone: 'violet' }
   const commandExecutionFrame = useMemo<ExecutionFrame | null>(() => {
     if (scenario === 'traffic') {
+      const activeRoute = getTrafficStrategyRoute(state.traffic.activeRouteId)
       return createCommandExecutionFrame({
         id: 'traffic-zhongshan-reroute',
         label: '清障车 02',
         kind: 'traffic',
-        routeRole: state.traffic.activeRouteId === 'C' ? 'medical' : 'secondary',
+        routeRole: activeRoute.executionRouteRole,
         progress: state.traffic.carProgress,
         phase: state.traffic.phase,
       })
@@ -197,6 +202,8 @@ export const CommandWorkbench = memo(function CommandWorkbench({ event, renderMa
       setTrafficRecalculationProgress(0)
       return undefined
     }
+    const routeId = state.traffic.activeRouteId
+    if (!isTrafficSelectableRouteId(routeId)) return undefined
 
     const durationMs = reducedMotion ? 180 : 1100
     const startedAt = performance.now()
@@ -207,11 +214,11 @@ export const CommandWorkbench = memo(function CommandWorkbench({ event, renderMa
       setTrafficRecalculationProgress(progress)
       if (progress < 100) return
       window.clearInterval(timer)
-      dispatch({ type: 'traffic/recalculation-complete' })
+      dispatch({ type: 'traffic/recalculation-complete', routeId })
     }, reducedMotion ? 60 : 90)
 
     return () => window.clearInterval(timer)
-  }, [reducedMotion, state.traffic.phase])
+  }, [reducedMotion, state.traffic.activeRouteId, state.traffic.phase])
 
   useEffect(() => {
     if (state.medical.phase !== 'recalculating') {
@@ -237,10 +244,11 @@ export const CommandWorkbench = memo(function CommandWorkbench({ event, renderMa
   const liveMessage = useMemo(() => {
     if (scenario === 'traffic') {
       const traffic = state.traffic
-      if (traffic.phase === 'recalculating') return '车辆已绑定路线 C，正在重算新方案。'
-      if (traffic.phase === 'awaiting-approval') return '方案 v2 已生成，地图预览已切换，等待负责人确认下发。'
+      const routeLabel = `路线 ${traffic.activeRouteId}`
+      if (traffic.phase === 'recalculating') return `车辆已绑定${routeLabel}，正在重算新方案。`
+      if (traffic.phase === 'awaiting-approval') return `方案 v${traffic.planVersion} 已生成，${routeLabel} 预览等待负责人确认下发。`
       if (traffic.phase === 'acknowledged') return '新任务已模拟签收，等待指挥员开始执行。'
-      if (traffic.phase === 'en-route') return '新任务开始执行，清障车沿路线 C 继续移动。'
+      if (traffic.phase === 'en-route') return `新任务开始执行，清障车沿${routeLabel}继续移动。`
       if (traffic.phase === 'arrived') return '清障车已模拟抵达作业点。'
     }
     if (scenario === 'medical') {
@@ -289,6 +297,19 @@ export const CommandWorkbench = memo(function CommandWorkbench({ event, renderMa
     previewMedicalFacility(drop.facilityId, drop.routeProgress)
   }, [previewMedicalFacility])
 
+  const previewTrafficRoute = useCallback((routeId: TrafficSelectableRouteId, routeProgress?: number) => {
+    const route = getTrafficStrategyRoute(routeId)
+    dispatch({
+      type: 'traffic/select-route',
+      routeId,
+      routeProgress: routeProgress ?? route.defaultProgress,
+    })
+  }, [])
+
+  const handleTrafficDrop = useCallback((drop: CommandTrafficRouteDrop) => {
+    previewTrafficRoute(drop.routeId, drop.routeProgress)
+  }, [previewTrafficRoute])
+
   const scenarioAdvisorMessages = advisorMessages.filter((message) => message.scenario === scenario)
   const visibleAdvisorMessages = scenarioAdvisorMessages.length > 0
     ? scenarioAdvisorMessages
@@ -309,7 +330,7 @@ export const CommandWorkbench = memo(function CommandWorkbench({ event, renderMa
           executionFrame: commandExecutionFrame,
           onScenarioPointSelect: (label) => {
             if (scenario === 'traffic' && label === '阻塞前换道路口（模拟）') {
-              dispatch({ type: 'traffic/drop-reroute', routeProgress: 0.43 })
+              previewTrafficRoute('C')
             }
           },
         })}
@@ -329,7 +350,7 @@ export const CommandWorkbench = memo(function CommandWorkbench({ event, renderMa
         ) : null}
         traffic={state.traffic}
         medical={state.medical}
-        onTrafficDrop={(routeProgress) => dispatch({ type: 'traffic/drop-reroute', routeProgress })}
+        onTrafficDrop={handleTrafficDrop}
         onMedicalDrop={handleMedicalDrop}
       />
 
@@ -380,7 +401,7 @@ export const CommandWorkbench = memo(function CommandWorkbench({ event, renderMa
               state={state.traffic}
               recalculationProgress={trafficRecalculationProgress}
               onAsk={askAdvisor}
-              onPreviewRouteC={() => dispatch({ type: 'traffic/drop-reroute', routeProgress: 0.43 })}
+              onPreviewRoute={previewTrafficRoute}
             />
           )}
           {scenario === 'medical' && (
@@ -657,7 +678,7 @@ function CommandSituationSummary({
   planVersion: number
   approvedVersion: number | null
   phase: CommandPhase
-  trafficRouteId: 'B' | 'C'
+  trafficRouteId: TrafficStrategyRouteId
   medicalFacilityId: DispatchFacilityId
 }) {
   const traffic = scenario === 'traffic'
@@ -796,7 +817,8 @@ function DecisionOption({
   )
 }
 
-function trafficDecisionCopy(phase: CommandPhase) {
+function trafficDecisionCopy(phase: CommandPhase, activeRoute: TrafficStrategyRoute) {
+  const routeLabel = `路线 ${activeRoute.id}`
   if (phase === 'blocked') return {
     title: '道路阻塞导致执行异常',
     detail: '路线 B 的原演示 ETA 最短，但前方清障反馈延迟，车辆将在安全决策点前暂停。',
@@ -805,29 +827,29 @@ function trafficDecisionCopy(phase: CommandPhase) {
     )),
   }
   if (phase === 'recalculating') return {
-    title: '路线 C 调整方案生成中',
+    title: `${routeLabel} 调整方案生成中`,
     detail: '地图已按负责人的拖拽或右栏选择切换预览，系统正在同步重算风险与任务清单。',
-    signals: ['路线 B 已转为静态参考线', '路线 C 已成为动态预览线', '新方案尚未形成，旧任务状态暂不改写'],
+    signals: ['路线 B 已转为静态参考线', `${routeLabel} 已成为动态预览线`, '新方案尚未形成，旧任务状态暂不改写'],
   }
   if (phase === 'awaiting-approval') return {
-    title: '路线 C 调整方案待确认',
-    detail: '方案 v2 已生成；地图保持路线 C 预览，等待负责人确认并模拟下发。',
+    title: `${routeLabel} 调整方案待确认`,
+    detail: `方案 v2 已生成；地图保持${routeLabel}预览，确认前仍可切换另一条候选路线。`,
     signals: ['旧批准已与新方案解绑', '旧任务包已失效并保留审计记录', '接收单位尚未收到新任务包'],
   }
   if (phase === 'sent-awaiting-ack') return {
-    title: '路线 C 新任务已模拟发送',
+    title: `${routeLabel} 新任务已模拟发送`,
     detail: '负责人已确认方案 v2，并完成本地模拟下发；当前等待接收单位模拟签收。',
-    signals: ['路线 C 已绑定方案 v2', '旧任务包保持失效状态', '车辆尚未开始按新任务执行'],
+    signals: [`${routeLabel} 已绑定方案 v2`, '旧任务包保持失效状态', '车辆尚未开始按新任务执行'],
   }
   if (phase === 'acknowledged') return {
-    title: '路线 C 新任务已模拟签收',
+    title: `${routeLabel} 新任务已模拟签收`,
     detail: '接收单位已完成本地模拟签收，等待指挥员启动执行演示。',
     signals: ['新任务包版本为 v2', '旧任务包已被新版本替代', '车辆仍停在当前安全位置'],
   }
   if (phase === 'en-route') return {
-    title: '清障车正沿路线 C 模拟在途',
-    detail: '新任务已进入执行演示，车辆沿动态路线 C 缓慢移动。',
-    signals: ['路线 B 保持静态历史参考', '路线 C 显示当前模拟执行', '到场回执尚未形成'],
+    title: `清障车正沿${routeLabel}模拟在途`,
+    detail: `新任务已进入执行演示，车辆沿动态${routeLabel}缓慢移动。`,
+    signals: ['路线 B 保持静态历史参考', `${routeLabel} 显示当前模拟执行`, '到场回执尚未形成'],
   }
   return {
     title: '清障车已模拟抵达作业点',
@@ -879,50 +901,59 @@ function medicalDecisionCopy(phase: CommandPhase, facility: (typeof DISPATCH_FAC
   }
 }
 
+function trafficRouteOptionStatus(
+  phase: CommandPhase,
+  activeRouteId: TrafficStrategyRouteId,
+  routeId: TrafficSelectableRouteId,
+) {
+  const editable = ['blocked', 'recalculating', 'awaiting-approval'].includes(phase)
+  if (activeRouteId !== routeId) {
+    if (!editable) return '候选已冻结'
+    return routeId === 'C' ? '建议优先' : '第二备选'
+  }
+  if (phase === 'recalculating') return '方案生成中'
+  if (phase === 'awaiting-approval') return '待确认下发'
+  if (phase === 'sent-awaiting-ack') return '已模拟发送'
+  if (phase === 'acknowledged') return '已模拟签收'
+  if (phase === 'en-route') return '模拟执行中'
+  if (phase === 'arrived') return '已模拟抵达'
+  return '已选草案'
+}
+
 function TrafficPlan({
   state,
   recalculationProgress,
   onAsk,
-  onPreviewRouteC,
+  onPreviewRoute,
 }: {
   state: ReturnType<typeof createInitialCommandWorkbenchState>['traffic']
   recalculationProgress: number
   onAsk: (question: string) => void
-  onPreviewRouteC: () => void
+  onPreviewRoute: (routeId: TrafficSelectableRouteId, routeProgress?: number) => void
 }) {
   const routeA = getTrafficStrategyRoute('A')
   const routeB = getTrafficStrategyRoute('B')
   const routeC = getTrafficStrategyRoute('C')
-  const routeCPreview = state.activeRouteId === 'C'
+  const activeRoute = getTrafficStrategyRoute(state.activeRouteId)
+  const routeChanged = state.activeRouteId !== 'B'
+  const editable = ['blocked', 'recalculating', 'awaiting-approval'].includes(state.phase)
   const replacementIssued = ['sent-awaiting-ack', 'acknowledged', 'en-route', 'arrived'].includes(state.phase)
-  const decisionCopy = trafficDecisionCopy(state.phase)
+  const decisionCopy = trafficDecisionCopy(state.phase, activeRoute)
+  const activeRouteLabel = `路线 ${activeRoute.id}`
   const trafficMapStatus = state.phase === 'en-route'
-    ? '路线 C · 模拟执行中'
+    ? `${activeRouteLabel} · 模拟执行中`
     : state.phase === 'arrived'
-      ? '路线 C · 模拟抵达'
-      : routeCPreview
-        ? '路线 C · 调整预览'
+      ? `${activeRouteLabel} · 模拟抵达`
+      : routeChanged
+        ? `${activeRouteLabel} · 调整预览`
         : '路线 B · 执行异常'
   const trafficPlanStatus = replacementIssued
     ? '新方案已模拟下发'
     : state.phase === 'recalculating'
       ? '新方案生成中'
-      : routeCPreview
+      : routeChanged
         ? '待负责人确认下发'
         : '等待地图或右栏调整'
-  const routeCStatus = state.phase === 'blocked'
-    ? '建议优先'
-    : state.phase === 'recalculating'
-      ? '方案生成中'
-      : state.phase === 'awaiting-approval'
-        ? '待确认下发'
-        : state.phase === 'sent-awaiting-ack'
-          ? '已模拟发送'
-          : state.phase === 'acknowledged'
-            ? '已模拟签收'
-            : state.phase === 'en-route'
-              ? '模拟执行中'
-              : '已模拟抵达'
   const decisionTone = state.phase === 'blocked' ? 'danger' : ['recalculating', 'awaiting-approval'].includes(state.phase) ? 'blue' : 'green'
 
   return (
@@ -935,15 +966,17 @@ function TrafficPlan({
         tone={decisionTone}
         askLabel={state.phase === 'blocked' ? '让助手分析这项异常' : '让助手解释当前状态'}
       >
-        {state.phase === 'recalculating' && <PlanRecalculationProgress progress={recalculationProgress} scenario="traffic" />}
+        {state.phase === 'recalculating' && <PlanRecalculationProgress progress={recalculationProgress} scenario="traffic" routeName={activeRouteLabel} />}
         <div className="command-decision-options" role="radiogroup" aria-label="中山路候选路线">
           <DecisionOption
             code={routeA.id}
             title={routeA.title}
             meta={`${routeA.etaLabel} · ${routeA.roadStatus}`}
             evidence={routeA.recommendationReason}
-            status="第二备选"
-            disabled
+            status={trafficRouteOptionStatus(state.phase, state.activeRouteId, 'A')}
+            selected={state.activeRouteId === 'A'}
+            disabled={!editable || state.activeRouteId === 'A'}
+            onClick={() => onPreviewRoute('A', routeA.defaultProgress)}
             testId="traffic-route-option-a"
           />
           <DecisionOption
@@ -951,8 +984,8 @@ function TrafficPlan({
             title={routeB.title}
             meta={`${routeB.etaLabel} · ${routeB.roadStatus}`}
             evidence={routeB.recommendationReason}
-            status={routeCPreview ? '旧路线' : '当前异常'}
-            selected={!routeCPreview}
+            status={routeChanged ? '旧路线' : '当前异常'}
+            selected={!routeChanged}
             danger
             disabled
             testId="traffic-route-option-b"
@@ -962,11 +995,11 @@ function TrafficPlan({
             title={routeC.title}
             meta={`${routeC.etaLabel} · ${routeC.roadStatus}`}
             evidence={routeC.recommendationReason}
-            status={routeCStatus}
-            selected={routeCPreview}
+            status={trafficRouteOptionStatus(state.phase, state.activeRouteId, 'C')}
+            selected={state.activeRouteId === 'C'}
             recommended
-            disabled={state.phase !== 'blocked'}
-            onClick={onPreviewRouteC}
+            disabled={!editable || state.activeRouteId === 'C'}
+            onClick={() => onPreviewRoute('C', routeC.defaultProgress)}
             testId="traffic-route-option-c"
           />
         </div>
@@ -976,7 +1009,7 @@ function TrafficPlan({
         items={[
           ['地图状态', trafficMapStatus],
           ['方案状态', trafficPlanStatus],
-          ['道路状态', routeCPreview ? '预置路线绕开受阻点 · 模拟' : '原路线不可继续 · 模拟待核实'],
+          ['道路状态', routeChanged ? activeRoute.roadStatus : '原路线不可继续 · 模拟待核实'],
           ['执行单位', state.phase === 'arrived' ? '清障车 02 · 已抵达' : '清障车 02 · 模拟'],
         ]}
       />
@@ -996,10 +1029,12 @@ function PlanRecalculationProgress({
   progress,
   scenario,
   facilityName,
+  routeName,
 }: {
   progress: number
   scenario: 'traffic' | 'medical'
   facilityName?: string
+  routeName?: string
 }) {
   const stage = progress < 36
     ? scenario === 'medical' ? '绑定救护车与候选接收路线' : '捕捉车辆与目标道路'
@@ -1016,7 +1051,7 @@ function PlanRecalculationProgress({
       <div
         className="command-plan-loading-track"
         role="progressbar"
-        aria-label={scenario === 'medical' ? `${facilityName ?? '候选医院'}转运方案生成进度` : '路线 C 方案生成进度'}
+        aria-label={scenario === 'medical' ? `${facilityName ?? '候选医院'}转运方案生成进度` : `${routeName ?? '候选路线'}方案生成进度`}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={progress}
@@ -1278,10 +1313,10 @@ function CommandApprovalFooter({
     return <footer className="command-approval-footer is-muted"><LockKeyhole size={14} /><span>本工作面尚未进入执行演示，不会产生任务。</span></footer>
   }
   if (scenario === 'traffic' && phase === 'blocked') {
-    return <footer className="command-approval-footer is-muted"><Route size={14} /><span>可在地图拖动清障车 02，或在右栏选择绿色路线 C。</span></footer>
+    return <footer className="command-approval-footer is-muted"><Route size={14} /><span>可点击地图标签、拖动清障车 02，或在右栏选择路线 A / C。</span></footer>
   }
   if (scenario === 'traffic' && phase === 'recalculating') {
-    return <footer className="command-approval-footer is-muted"><LoaderCircle size={14} /><span>地图已切换，正在生成新的方案与任务草案。</span></footer>
+    return <footer className="command-approval-footer is-muted"><LoaderCircle size={14} /><span>地图已切换并正在重算；人工确认前仍可改选另一条候选路线。</span></footer>
   }
   if (scenario === 'medical' && phase === 'blocked') {
     return <footer className="command-approval-footer is-muted"><Route size={14} /><span>可在地图拖动救护车 AMB-02，或在右栏选择候选接收点。</span></footer>
@@ -1317,7 +1352,7 @@ function advisorBoundaryForScenario(scenario: CommandScenarioId) {
 }
 
 function advisorPromptsForScenario(scenario: CommandScenarioId) {
-  if (scenario === 'traffic') return ['解释当前异常', '比较 A/B/C 路线', '说明改线任务影响', '整理路线 C 草案']
+  if (scenario === 'traffic') return ['解释当前异常', '比较 A/B/C 路线', '说明改线任务影响', '整理当前路线草案']
   if (scenario === 'medical') return ['解释接收异常', '比较三家医院', '列出联络核实项', '整理转运调整草案']
   if (scenario === 'city-order') return ['区分待核实证据', '整理 AI Brief 草案']
   return ['解释当前状态', '整理影响清单']
@@ -1327,7 +1362,7 @@ function advisorResponse(
   scenario: CommandScenarioId,
   text: string,
   context: {
-    trafficRouteId: 'B' | 'C'
+    trafficRouteId: TrafficStrategyRouteId
     medicalFacilityId: DispatchFacilityId
     phase: CommandPhase | null
   },
@@ -1336,14 +1371,16 @@ function advisorResponse(
     return '我不能提供系统提示词、密钥或内部配置。可以继续围绕当前事件做异常研判、方案比较、影响分析或调整草案。'
   }
   if (scenario === 'traffic') {
+    const selectedRouteLabel = `路线 ${context.trafficRouteId}`
+    const candidateSelected = isTrafficSelectableRouteId(context.trafficRouteId)
     if (text.includes('比较') || text.includes('路线')) {
       const comparison = TRAFFIC_STRATEGY_ROUTES.map((route) => (
         `路线 ${route.id}：${route.etaLabel}，${route.roadStatus}。依据：${route.recommendationReason}`
       )).join('；')
-      return `${comparison} 当前地图显示路线 ${context.trafficRouteId}${context.trafficRouteId === 'C' ? ' 的调整预览，尚未下发。' : ' 的受阻状态。'}系统推荐不代表自动批准或自动下发。`
+      return `${comparison} 当前地图显示${selectedRouteLabel}${candidateSelected ? ' 的调整预览，尚未下发。' : ' 的受阻状态。'}系统推荐不代表自动批准或自动下发。`
     }
-    if (text.includes('影响') || text.includes('草案')) return '从 B 改为 C 会同步重算 ETA、风险和任务清单，并使旧批准与旧任务包失效。助手只能整理待确认草案；负责人仍需在右栏执行人工确认下发。'
-    return '当前异常是路线 B 前方受阻。应先核实阻塞范围、预计恢复时间和路线 C 的可通行条件；页面车辆位置、ETA 和回执均为本地模拟。'
+    if (text.includes('影响') || text.includes('草案')) return `从路线 B 改为${candidateSelected ? selectedRouteLabel : '候选路线 A 或 C'}会同步重算 ETA、风险和任务清单，并使旧批准与旧任务包失效。助手只能整理待确认草案；负责人仍需在右栏执行人工确认下发。`
+    return '当前异常是路线 B 前方受阻。应先核实阻塞范围、预计恢复时间，以及候选路线 A / C 的实际可通行条件；页面车辆位置、ETA 和回执均为本地模拟。'
   }
   if (scenario === 'medical') {
     const selectedFacility = getDispatchFacility(context.medicalFacilityId) ?? DISPATCH_FACILITIES[0]

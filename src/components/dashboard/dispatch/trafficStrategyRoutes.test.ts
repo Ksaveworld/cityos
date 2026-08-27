@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import {
   getTrafficStrategyRoute,
+  getSelectableTrafficStrategyRoutes,
   TRAFFIC_PREVIOUS_CONVENTIONAL_ETA_MINUTES,
   TRAFFIC_SECOND_ALTERNATIVE_PATH,
   TRAFFIC_STRATEGY_ROUTES,
@@ -18,6 +19,18 @@ test('traffic comparison has one current blocked route, one recommendation, and 
       ['C', 'recommended'],
     ],
   )
+  assert.deepEqual(
+    TRAFFIC_STRATEGY_ROUTES.map((route) => [route.id, route.selectable, route.executionRouteRole]),
+    [
+      ['A', true, 'primary'],
+      ['B', false, 'secondary'],
+      ['C', true, 'medical'],
+    ],
+  )
+  assert.deepEqual(getSelectableTrafficStrategyRoutes().map((route) => route.id), ['A', 'C'])
+  assert.ok(getSelectableTrafficStrategyRoutes().every((route) => (
+    route.defaultProgress >= 0.05 && route.defaultProgress <= 0.95
+  )))
 
   for (const route of TRAFFIC_STRATEGY_ROUTES) {
     assert.match(route.etaLabel, /演示估算/)

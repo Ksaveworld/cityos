@@ -8,7 +8,10 @@ import type {
 } from './CommandMapInteractionContext'
 import { isDispatchSelectableFacilityId, type DispatchSelectableFacilityId } from './dispatchData'
 import { nearestRouteSnap } from './routeSnap'
-import type { TrafficStrategyRouteId } from './trafficStrategyRoutes'
+import {
+  isTrafficSelectableRouteId,
+  type TrafficStrategyRouteId,
+} from './trafficStrategyRoutes'
 
 export interface CommandTrafficRouteAnnotation {
   routeId: TrafficStrategyRouteId
@@ -19,6 +22,7 @@ export interface CommandTrafficRouteAnnotation {
   path: Array<[number, number]>
   labelPosition: [number, number]
   labelOffset?: [number, number]
+  defaultProgress: number
   active: boolean
 }
 
@@ -52,15 +56,35 @@ export const CommandTrafficMapMarkers = memo(function CommandTrafficMapMarkers({
   const styleReady = useMapStyleReady(map)
 
   if (!map || !styleReady) return null
+  const origin = routes.find((route) => route.path.length >= 2)?.path[0] ?? null
 
   return (
     <>
-      {routes.map((route) => <RouteAnnotationMarker key={route.routeId} map={map} route={route} />)}
+      {routes.map((route) => {
+        const selectable = interaction.enabled
+          && isTrafficSelectableRouteId(route.routeId)
+          && interaction.targetRouteIds.includes(route.routeId)
+        return (
+          <RouteAnnotationMarker
+            key={route.routeId}
+            map={map}
+            route={route}
+            selectable={selectable}
+            onSelect={() => {
+              if (!isTrafficSelectableRouteId(route.routeId)) return
+              interaction.onDrop({ routeId: route.routeId, routeProgress: route.defaultProgress })
+            }}
+          />
+        )
+      })}
+      {origin && <TrafficRouteOriginMarker map={map} position={origin} />}
       {unit && (
         <TrafficUnitMarker
           map={map}
           unit={unit}
-          targetRoute={routes.find((route) => route.routeId === interaction.targetRouteId) ?? null}
+          targetRoutes={routes.filter((route) => (
+            isTrafficSelectableRouteId(route.routeId) && interaction.targetRouteIds.includes(route.routeId)
+          ))}
           interaction={interaction}
         />
       )}
@@ -128,7 +152,17 @@ function useMapStyleReady(map: MapLibreMap | null) {
   return ready
 }
 
-function RouteAnnotationMarker({ map, route }: { map: MapLibreMap; route: CommandTrafficRouteAnnotation }) {
+function RouteAnnotationMarker({
+  map,
+  route,
+  selectable,
+  onSelect,
+}: {
+  map: MapLibreMap
+  route: CommandTrafficRouteAnnotation
+  selectable: boolean
+  onSelect: () => void
+}) {
   const element = useMemo(() => {
     const host = document.createElement('div')
     host.className = 'command-route-label-marker'
@@ -138,6 +172,10 @@ function RouteAnnotationMarker({ map, route }: { map: MapLibreMap; route: Comman
   const [lng, lat] = route.labelPosition
   const labelOffsetX = route.labelOffset?.[0] ?? 0
   const labelOffsetY = route.labelOffset?.[1] ?? 0
+
+  useEffect(() => {
+    element.dataset.interactive = selectable ? 'true' : 'false'
+  }, [element, selectable])
 
   useEffect(() => {
     const marker = new Marker({
@@ -153,15 +191,62 @@ function RouteAnnotationMarker({ map, route }: { map: MapLibreMap; route: Comman
   }, [element, labelOffsetX, labelOffsetY, lat, lng, map])
 
   return createPortal(
-    <div
+    <button
+      type="button"
       className="command-route-map-label"
       data-route-id={route.routeId}
       data-active={route.active ? 'true' : 'false'}
+      disabled={!selectable}
+      aria-label={`${route.title}，${route.time}，${route.status}${selectable ? '，点击切换路线草案' : ''}`}
+      onClick={(event) => {
+        event.stopPropagation()
+        onSelect()
+      }}
       style={{ '--route-color': route.color } as CSSProperties}
     >
       <span>{route.routeId}</span>
       <strong>{route.time}</strong>
       <small>{route.status}</small>
+    </button>,
+    element,
+  )
+}
+
+function TrafficRouteOriginMarker({
+  map,
+  position,
+}: {
+  map: MapLibreMap
+  position: [number, number]
+}) {
+  const element = useMemo(() => {
+    const host = document.createElement('div')
+    host.className = 'command-traffic-origin-marker'
+    host.style.zIndex = '6'
+    return host
+  }, [])
+  const [lng, lat] = position
+
+  useEffect(() => {
+    const marker = new Marker({ element, anchor: 'bottom', offset: [0, -2] })
+      .setLngLat([lng, lat])
+      .addTo(map)
+    return () => {
+      marker.remove()
+    }
+  }, [element, lat, lng, map])
+
+  return createPortal(
+    <div
+      className="command-traffic-origin"
+      data-testid="traffic-route-origin"
+      data-position={`${lng},${lat}`}
+      role="img"
+      aria-label="清障车 02 调度起点，模拟"
+    >
+      <span aria-hidden="true">起</span>
+      <strong>调度起点</strong>
+      <small>模拟</small>
     </div>,
     element,
   )
@@ -170,26 +255,31 @@ function RouteAnnotationMarker({ map, route }: { map: MapLibreMap; route: Comman
 function TrafficUnitMarker({
   map,
   unit,
-  targetRoute,
+  targetRoutes,
   interaction,
 }: {
   map: MapLibreMap
   unit: CommandTrafficUnitMarkerDatum
-  targetRoute: CommandTrafficRouteAnnotation | null
+  targetRoutes: CommandTrafficRouteAnnotation[]
   interaction: CommandTrafficDragInteraction
 }) {
   return (
     <DraggableUnitMarker
       map={map}
       unit={unit}
-      targetRoutes={targetRoute ? [{ id: targetRoute.routeId, path: targetRoute.path }] : []}
+      targetRoutes={targetRoutes.map((route) => ({ id: route.routeId, path: route.path }))}
       enabled={interaction.enabled}
       kind="traffic"
       testId="draggable-traffic-unit"
-      dragHint="拖到绿色 C 路线"
-      compactHint="预览 · 未下发"
-      keyboardInstruction="按住拖动到绿色路线 C；键盘按回车可生成同一改线预览"
-      onDrop={(_routeId, routeProgress) => interaction.onDrop({ routeId: 'C', routeProgress })}
+      dragHint="拖到另一条候选路线"
+      compactHint={interaction.markerStatusLabel}
+      keyboardInstruction="按住拖动到候选路线 A 或 C；键盘按回车可切换到另一条候选路线"
+      disabledInstruction={interaction.markerStatusLabel}
+      onDrop={(routeId, routeProgress) => {
+        const candidateRouteId = routeId as TrafficStrategyRouteId
+        if (!isTrafficSelectableRouteId(candidateRouteId)) return
+        interaction.onDrop({ routeId: candidateRouteId, routeProgress })
+      }}
     />
   )
 }

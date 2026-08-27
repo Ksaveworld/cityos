@@ -3,6 +3,11 @@ import {
   type DispatchFacilityId,
   type DispatchSelectableFacilityId,
 } from './dispatchData.ts'
+import {
+  isTrafficSelectableRouteId,
+  type TrafficSelectableRouteId,
+  type TrafficStrategyRouteId,
+} from './trafficStrategyRoutes.ts'
 
 export type CommandScenarioId = 'traffic' | 'medical' | 'city-order' | 'fire' | 'police' | 'major' | 'generic'
 
@@ -44,7 +49,7 @@ export interface TrafficCommandState {
   carProgress: number
   planVersion: number
   approvedVersion: number | null
-  activeRouteId: 'B' | 'C'
+  activeRouteId: TrafficStrategyRouteId
   taskVersion: number | null
   taskStatus: CommandTaskStatus
   previousTask: PreviousCommandTask | null
@@ -78,8 +83,8 @@ export interface CommandWorkbenchState {
 
 export type CommandWorkbenchAction =
   | { type: 'traffic/tick'; delta: number }
-  | { type: 'traffic/drop-reroute'; routeProgress: number }
-  | { type: 'traffic/recalculation-complete' }
+  | { type: 'traffic/select-route'; routeId: TrafficSelectableRouteId; routeProgress: number }
+  | { type: 'traffic/recalculation-complete'; routeId: TrafficSelectableRouteId }
   | { type: 'traffic/approve-and-issue' }
   | { type: 'traffic/acknowledge' }
   | { type: 'traffic/start-execution' }
@@ -126,7 +131,7 @@ const INITIAL_MEDICAL_STATE: MedicalCommandState = {
 }
 
 // 路线 B 从起点到阻塞前换道路口约 234.2 m；在负责人尚未拖放改线时，
-// 车辆最多移动到这处安全决策点。拖放后的位置直接来自地图对路线 C 的吸附进度。
+// 车辆最多移动到这处安全决策点。选择候选后的位置直接来自地图对路线 A / C 的吸附进度。
 const TRAFFIC_SAFE_DECISION_PROGRESS_B = 0.2377266150
 const MEDICAL_SAFE_DECISION_PROGRESS_OLD = 0.1950485337
 
@@ -189,28 +194,33 @@ export function commandWorkbenchReducer(
         },
       }
     }
-    case 'traffic/drop-reroute':
-      if (state.traffic.phase !== 'blocked' || state.traffic.activeRouteId !== 'B') return state
+    case 'traffic/select-route': {
+      const editable = ['blocked', 'recalculating', 'awaiting-approval'].includes(state.traffic.phase)
+      if (!editable || !isTrafficSelectableRouteId(action.routeId)) return state
+      if (state.traffic.activeRouteId === action.routeId) return state
       return {
         ...state,
         traffic: {
           ...state.traffic,
           phase: 'recalculating',
-          activeRouteId: 'C',
+          activeRouteId: action.routeId,
           carProgress: Math.max(0.05, Math.min(0.95, action.routeProgress)),
         },
       }
+    }
     case 'traffic/recalculation-complete':
-      if (state.traffic.phase !== 'recalculating') return state
+      if (state.traffic.phase !== 'recalculating' || state.traffic.activeRouteId !== action.routeId) return state
       return {
         ...state,
         traffic: {
           ...state.traffic,
           phase: 'awaiting-approval',
-          planVersion: 2,
+          planVersion: state.traffic.approvedVersion === state.traffic.planVersion
+            ? state.traffic.planVersion + 1
+            : state.traffic.planVersion,
           approvedVersion: null,
           taskStatus: 'invalidated',
-          previousTask: {
+          previousTask: state.traffic.previousTask ?? {
             version: state.traffic.taskVersion ?? state.traffic.planVersion,
             status: 'invalidated',
           },

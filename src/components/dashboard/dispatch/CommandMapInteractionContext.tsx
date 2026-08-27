@@ -1,15 +1,17 @@
 import { createContext, useContext } from 'react'
 import type { DispatchFacilityId, DispatchSelectableFacilityId } from './dispatchData'
+import type { TrafficSelectableRouteId, TrafficStrategyRouteId } from './trafficStrategyRoutes'
 
 export interface CommandTrafficRouteDrop {
-  routeId: 'C'
+  routeId: TrafficSelectableRouteId
   routeProgress: number
 }
 
 export interface CommandTrafficDragInteraction {
   enabled: boolean
-  activeRouteId: 'B' | 'C'
-  targetRouteId: 'C'
+  activeRouteId: TrafficStrategyRouteId
+  targetRouteIds: TrafficSelectableRouteId[]
+  markerStatusLabel: string
   onDrop: (drop: CommandTrafficRouteDrop) => void
 }
 

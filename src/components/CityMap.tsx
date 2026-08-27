@@ -62,7 +62,6 @@ import {
   type CommandTrafficUnitMarkerDatum,
 } from '@/components/dashboard/dispatch/CommandTrafficMapMarkers'
 import {
-  getTrafficStrategyRoute,
   TRAFFIC_STRATEGY_ROUTES,
 } from '@/components/dashboard/dispatch/trafficStrategyRoutes'
 import type {
@@ -1708,9 +1707,7 @@ export const CityMap = memo(function CityMap({
     if (!executionFrame) return null
     const routeRole = executionFrame.units[0]?.routeRole
     if (scenarioVariant === 'traffic' && executionFrame.definitionId === 'traffic-zhongshan-reroute') {
-      // 交通工作台用 secondary / medical 分别绑定冻结后的 B / C 路网几何。
-      if (routeRole === 'secondary') return getTrafficStrategyRoute('B').displayLabel
-      if (routeRole === 'medical') return getTrafficStrategyRoute('C').displayLabel
+      return TRAFFIC_STRATEGY_ROUTES.find((route) => route.executionRouteRole === routeRole)?.displayLabel ?? null
     }
     if (scenarioVariant === 'medical' && executionFrame.definitionId === 'medical-panfu-transfer') {
       return DISPATCH_FACILITIES.find((facility) => facility.route.role === routeRole)?.route.displayLabel ?? null
@@ -1740,6 +1737,7 @@ export const CityMap = memo(function CityMap({
         color: `rgb(${route.color[0]} ${route.color[1]} ${route.color[2]})`,
         path: route.path,
         labelOffset: option.labelOffset,
+        defaultProgress: option.defaultProgress,
         labelPosition: separatedRouteLabelPosition(
           route.path,
           trafficRoutes.filter((candidate) => candidate !== route).map((candidate) => candidate.path),
@@ -1841,6 +1839,17 @@ export const CityMap = memo(function CityMap({
       const pathForRole = (role: ExecutionRouteRole) => {
         const facility = DISPATCH_FACILITIES.find((candidate) => candidate.route.role === role)
         return scenarioRoutes.find((path) => path.dispatchFacilityId === facility?.id)?.path ?? []
+      }
+      return {
+        primary: pathForRole('primary'),
+        secondary: pathForRole('secondary'),
+        medical: pathForRole('medical'),
+      }
+    }
+    if (scenarioVariant === 'traffic') {
+      const pathForRole = (role: ExecutionRouteRole) => {
+        const route = TRAFFIC_STRATEGY_ROUTES.find((candidate) => candidate.executionRouteRole === role)
+        return scenarioRoutes.find((path) => path.displayLabel === route?.displayLabel)?.path ?? []
       }
       return {
         primary: pathForRole('primary'),
@@ -3008,6 +3017,7 @@ export const CityMap = memo(function CityMap({
       data-static-route-arrow-count={staticScenarioRouteArrows.length}
       data-command-route-label-count={commandTrafficRoutes.length}
       data-traffic-drag-enabled={commandMapInteraction.traffic?.enabled ? 'true' : 'false'}
+      data-traffic-drag-target-count={commandMapInteraction.traffic?.targetRouteIds.length ?? 0}
       data-medical-drag-enabled={commandMapInteraction.medical?.enabled ? 'true' : 'false'}
       data-medical-drag-target-count={commandMedicalTargetRoutes.length}
       data-active-scenario-route={activeScenarioRouteLabel ?? ''}

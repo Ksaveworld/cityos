@@ -51,7 +51,7 @@ test('medical transfer fixture exposes one impacted baseline and two selectable 
 
 test('dragging the traffic unit switches the map preview before recalculation invalidates v1', () => {
   const initial = createInitialCommandWorkbenchState()
-  const preview = commandWorkbenchReducer(initial, { type: 'traffic/drop-reroute', routeProgress: 0.43 })
+  const preview = commandWorkbenchReducer(initial, { type: 'traffic/select-route', routeId: 'C', routeProgress: 0.43 })
 
   assert.equal(preview.traffic.phase, 'recalculating')
   assert.equal(preview.traffic.activeRouteId, 'C')
@@ -62,12 +62,44 @@ test('dragging the traffic unit switches the map preview before recalculation in
   assert.equal(preview.traffic.taskStatus, 'en-route')
   assert.equal(preview.traffic.previousTask, null)
 
-  const submitted = commandWorkbenchReducer(preview, { type: 'traffic/recalculation-complete' })
+  const submitted = commandWorkbenchReducer(preview, { type: 'traffic/recalculation-complete', routeId: 'C' })
   assert.equal(submitted.traffic.phase, 'awaiting-approval')
   assert.equal(submitted.traffic.planVersion, 2)
   assert.equal(submitted.traffic.approvedVersion, null)
   assert.equal(submitted.traffic.taskStatus, 'invalidated')
   assert.deepEqual(submitted.traffic.previousTask, { version: 1, status: 'invalidated' })
+})
+
+test('traffic candidates can switch repeatedly before approval without creating extra plan versions', () => {
+  let state = createInitialCommandWorkbenchState()
+  state = commandWorkbenchReducer(state, { type: 'traffic/select-route', routeId: 'C', routeProgress: 0.43 })
+  state = commandWorkbenchReducer(state, { type: 'traffic/select-route', routeId: 'A', routeProgress: 0.36 })
+  const staleCompletion = commandWorkbenchReducer(state, { type: 'traffic/recalculation-complete', routeId: 'C' })
+  assert.strictEqual(staleCompletion, state, 'a stale timer cannot complete the newly selected route')
+  state = commandWorkbenchReducer(state, { type: 'traffic/recalculation-complete', routeId: 'A' })
+
+  assert.equal(state.traffic.phase, 'awaiting-approval')
+  assert.equal(state.traffic.activeRouteId, 'A')
+  assert.equal(state.traffic.planVersion, 2)
+  assert.deepEqual(state.traffic.previousTask, { version: 1, status: 'invalidated' })
+
+  state = commandWorkbenchReducer(state, { type: 'traffic/select-route', routeId: 'C', routeProgress: 0.41 })
+  assert.equal(state.traffic.phase, 'recalculating')
+  assert.equal(state.traffic.activeRouteId, 'C')
+  assert.equal(state.traffic.carProgress, 0.41)
+  state = commandWorkbenchReducer(state, { type: 'traffic/recalculation-complete', routeId: 'C' })
+  assert.equal(state.traffic.phase, 'awaiting-approval')
+  assert.equal(state.traffic.planVersion, 2)
+  assert.deepEqual(state.traffic.previousTask, { version: 1, status: 'invalidated' })
+
+  state = commandWorkbenchReducer(state, { type: 'traffic/select-route', routeId: 'A', routeProgress: 0.36 })
+  state = commandWorkbenchReducer(state, { type: 'traffic/recalculation-complete', routeId: 'A' })
+  assert.equal(state.traffic.activeRouteId, 'A')
+  assert.equal(state.traffic.planVersion, 2)
+
+  state = commandWorkbenchReducer(state, { type: 'traffic/approve-and-issue' })
+  const frozen = commandWorkbenchReducer(state, { type: 'traffic/select-route', routeId: 'C', routeProgress: 0.43 })
+  assert.strictEqual(frozen, state, 'human confirmation freezes route selection until the workflow is reset')
 })
 
 test('traffic route C preview is immediate but the replacement task still requires approval and delivery', () => {
@@ -77,7 +109,7 @@ test('traffic route C preview is immediate but the replacement task still requir
     Math.abs(state.traffic.carProgress - 0.2377266150) < 1e-10,
     'vehicle waits at the last shared B/C point before the blocked way',
   )
-  state = commandWorkbenchReducer(state, { type: 'traffic/drop-reroute', routeProgress: 0.43 })
+  state = commandWorkbenchReducer(state, { type: 'traffic/select-route', routeId: 'C', routeProgress: 0.43 })
   assert.equal(state.traffic.activeRouteId, 'C')
   assert.equal(state.traffic.carProgress, 0.43)
   assert.equal(
@@ -85,7 +117,7 @@ test('traffic route C preview is immediate but the replacement task still requir
     0.43,
     'map preview stays at the dropped position until the replacement task executes',
   )
-  state = commandWorkbenchReducer(state, { type: 'traffic/recalculation-complete' })
+  state = commandWorkbenchReducer(state, { type: 'traffic/recalculation-complete', routeId: 'C' })
 
   state = commandWorkbenchReducer(state, { type: 'traffic/approve-and-issue' })
   assert.equal(state.traffic.phase, 'sent-awaiting-ack')

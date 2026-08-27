@@ -7,12 +7,13 @@ import type {
   TrafficCommandState,
 } from './commandWorkbenchModel'
 import { CommandMapInteractionProvider } from './CommandMapInteractionProvider'
-import type { CommandMedicalRouteDrop } from './CommandMapInteractionContext'
+import type { CommandMedicalRouteDrop, CommandTrafficRouteDrop } from './CommandMapInteractionContext'
 import {
   dispatchFacilityEtaLabel,
   getDispatchFacility,
   getSelectableDispatchFacilities,
 } from './dispatchData'
+import { getSelectableTrafficStrategyRoutes } from './trafficStrategyRoutes'
 
 interface CommandTacticalMapProps {
   scenario: CommandScenarioId
@@ -20,7 +21,7 @@ interface CommandTacticalMapProps {
   advisor?: ReactNode
   traffic: TrafficCommandState
   medical: MedicalCommandState
-  onTrafficDrop: (routeProgress: number) => void
+  onTrafficDrop: (drop: CommandTrafficRouteDrop) => void
   onMedicalDrop: (drop: CommandMedicalRouteDrop) => void
 }
 
@@ -33,6 +34,7 @@ export const CommandTacticalMap = memo(function CommandTacticalMap({
   onTrafficDrop,
   onMedicalDrop,
 }: CommandTacticalMapProps) {
+  const trafficEditable = ['blocked', 'recalculating', 'awaiting-approval'].includes(traffic.phase)
   const medicalEditable = ['blocked', 'recalculating', 'awaiting-approval'].includes(medical.phase)
   const title = scenario === 'traffic'
     ? '中山路清障车在途改线'
@@ -44,10 +46,15 @@ export const CommandTacticalMap = memo(function CommandTacticalMap({
   const interaction = useMemo(() => ({
     traffic: scenario === 'traffic'
       ? {
-          enabled: traffic.phase === 'blocked' && traffic.activeRouteId === 'B',
+          enabled: trafficEditable,
           activeRouteId: traffic.activeRouteId,
-          targetRouteId: 'C' as const,
-          onDrop: ({ routeProgress }: { routeId: 'C'; routeProgress: number }) => onTrafficDrop(routeProgress),
+          targetRouteIds: trafficEditable
+            ? getSelectableTrafficStrategyRoutes()
+                .filter((route) => route.id !== traffic.activeRouteId)
+                .map((route) => route.id)
+            : [],
+          markerStatusLabel: trafficMarkerStatusLabel(traffic.phase),
+          onDrop: (drop: CommandTrafficRouteDrop) => onTrafficDrop(drop),
         }
       : null,
     medical: scenario === 'medical'
@@ -63,7 +70,7 @@ export const CommandTacticalMap = memo(function CommandTacticalMap({
           onDrop: (drop: CommandMedicalRouteDrop) => onMedicalDrop(drop),
         }
       : null,
-  }), [medical.phase, medical.selectedFacilityId, medicalEditable, onMedicalDrop, onTrafficDrop, scenario, traffic.activeRouteId, traffic.phase])
+  }), [medical.phase, medical.selectedFacilityId, medicalEditable, onMedicalDrop, onTrafficDrop, scenario, traffic.activeRouteId, traffic.phase, trafficEditable])
 
   return (
     <section className="command-map-panel" aria-label={`${title}地图`}>
@@ -129,14 +136,28 @@ function medicalMarkerStatusLabel(phase: MedicalCommandState['phase']) {
   return '预览 · 未下发'
 }
 
+function trafficMarkerStatusLabel(phase: TrafficCommandState['phase']) {
+  if (phase === 'sent-awaiting-ack') return '已模拟发送 · 待签收'
+  if (phase === 'acknowledged') return '已模拟签收 · 待执行'
+  if (phase === 'en-route') return '模拟执行中'
+  if (phase === 'arrived') return '已模拟抵达'
+  return '预览 · 未确认'
+}
+
 function TrafficDragGuide({ traffic }: { traffic: TrafficCommandState }) {
-  const routeChanged = traffic.activeRouteId === 'C'
+  const routeChanged = traffic.activeRouteId !== 'B'
+  const editable = ['blocked', 'recalculating', 'awaiting-approval'].includes(traffic.phase)
+  const route = routeChanged ? `路线 ${traffic.activeRouteId}` : null
   return (
     <div className={`command-drag-guide ${routeChanged ? 'is-preview' : ''}`} aria-live="polite">
       <span><Route size={15} /></span>
       <div>
-        <strong>{routeChanged ? '路线 C 已绑定地图预览' : '直接拖动车辆改线'}</strong>
-        <small>{routeChanged ? '地图已切换；新方案尚未人工确认下发' : '按住清障车 02，拖到绿色推荐路线 C'}</small>
+        <strong>{routeChanged ? `${route} 已绑定地图预览` : '直接拖动车辆改线'}</strong>
+        <small>{routeChanged
+          ? editable
+            ? '尚未人工确认；可继续点击或拖拽切换 A / C'
+            : '路线已随人工确认冻结'
+          : '按住清障车 02，拖到候选路线 A 或 C'}</small>
       </div>
     </div>
   )
