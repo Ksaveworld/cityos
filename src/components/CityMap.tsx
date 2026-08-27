@@ -1639,6 +1639,20 @@ export const CityMap = memo(function CityMap({
     () => scenarioRouting.paths.filter((path) => layers[path.layer]),
     [scenarioRouting.paths, layers],
   )
+  const activeScenarioRouteLabel = useMemo(() => {
+    if (scenarioVariant !== 'traffic' || executionFrame?.definitionId !== 'traffic-zhongshan-reroute') return null
+    const routeRole = executionFrame.units[0]?.routeRole
+    // 交通工作台用 secondary / medical 分别绑定冻结后的 B / C 路网几何。
+    if (routeRole === 'secondary') return '路线 B · 原最短 8 分钟 · 已受阻'
+    if (routeRole === 'medical') return '路线 C · 推荐改线 10 分钟'
+    return null
+  }, [executionFrame, scenarioVariant])
+  const activeScenarioPulsePath = useMemo(
+    () => activeScenarioRouteLabel
+      ? scenarioPaths.find((path) => path.layer === 'routes' && path.displayLabel === activeScenarioRouteLabel) ?? null
+      : null,
+    [activeScenarioRouteLabel, scenarioPaths],
+  )
 
   /**
    * 全图路线的激光脉冲数据源，见 PulseRouteDatum 的说明。
@@ -1656,6 +1670,7 @@ export const CityMap = memo(function CityMap({
     if (scenarioConfig) {
       scenarioPaths.forEach((path, index) => {
         if (path.layer !== 'routes' || path.path.length < 2) return
+        if (activeScenarioRouteLabel && path.displayLabel !== activeScenarioRouteLabel) return
         routes.push({
           id: `scenario-${index}`,
           label: path.displayLabel ?? path.endpointLabels[0],
@@ -1694,16 +1709,16 @@ export const CityMap = memo(function CityMap({
         phase: (index * 0.618033) % 1,
       }
     })
-  }, [layers.routes, scenarioConfig, scenarioPaths, cityOverviewMode, plans, medicalRoute, pulseActivePlanOnly, activePlan])
+  }, [layers.routes, scenarioConfig, scenarioPaths, cityOverviewMode, plans, medicalRoute, pulseActivePlanOnly, activePlan, activeScenarioRouteLabel])
 
   const pulseEnabled = taskRoutesVisible && routePulseAllowed && pulseRoutes.length > 0 && !reducedMotion && !routeStale
   // 任务包下发前不泄露行动路线；下发后由脉冲图层负责，关闭动效时回退为静态线。
-  const staticScenarioPaths = useMemo(
-    () => (taskRoutesVisible && !pulseEnabled
-      ? scenarioPaths
-      : scenarioPaths.filter((path) => path.layer !== 'routes')),
-    [pulseEnabled, scenarioPaths, taskRoutesVisible],
-  )
+  const staticScenarioPaths = useMemo(() => {
+    if (!taskRoutesVisible) return scenarioPaths.filter((path) => path.layer !== 'routes')
+    if (!pulseEnabled) return scenarioPaths
+    if (!activeScenarioPulsePath) return scenarioPaths.filter((path) => path.layer !== 'routes')
+    return scenarioPaths.filter((path) => path !== activeScenarioPulsePath)
+  }, [activeScenarioPulsePath, pulseEnabled, scenarioPaths, taskRoutesVisible])
   const executionRoutePaths = useMemo<Record<ExecutionRouteRole, Array<[number, number]>>>(() => {
     // 执行几何不能跟图层开关联动：隐藏车辆路线后，道路 cue 仍要能从原始求路结果取到位置。
     const scenarioRoutes = scenarioRouting.paths.filter((path) => path.layer === 'routes')
@@ -2127,10 +2142,12 @@ export const CityMap = memo(function CityMap({
             id: 'scenario-paths-simulated',
             data: staticScenarioPaths,
             getPath: (path) => path.path,
-            getColor: (path) => path.color,
+            getColor: (path) => activeScenarioPulsePath && path.layer === 'routes'
+              ? [path.color[0], path.color[1], path.color[2], 145]
+              : path.color,
             getWidth: (path) => path.layer === 'traffic'
               ? path.roadState === 'blocked' ? BLOCKED_ROAD_WIDTH_PX : ROAD_STATUS_WIDTH_PX
-              : path.width,
+              : activeScenarioPulsePath ? Math.max(1.7, path.width * 0.48) : path.width,
             widthUnits: 'pixels',
             getDashArray: (path) => path.roadState === 'blocked' ? [1.4, 1] : [1, 0],
             dashJustified: false,
@@ -2497,7 +2514,7 @@ export const CityMap = memo(function CityMap({
         }),
       ].filter(Boolean),
     })
-  }, [activePlan, activePlanSegments, routeStale, exclusiveSegments, sharedSegments, closedRoads, blockedRoadMarkers, trafficSegments, historyTrack, layers.routes, layers.traffic, medicalOrigins, roadNetworkContext, scenarioConfig, scenarioAreas, scenarioPaths, staticScenarioPaths, pulseRoutes, pulseEnabled, pulseActivePlanOnly, reducedMotion, cityOverviewMode, executionFrame, executionIntersections, executionOnsiteNodes, executionRoadCues, executionTrafficTrips, executionUnits, routePulseAllowed, taskRoutesVisible])
+  }, [activePlan, activePlanSegments, routeStale, exclusiveSegments, sharedSegments, closedRoads, blockedRoadMarkers, trafficSegments, historyTrack, layers.routes, layers.traffic, medicalOrigins, roadNetworkContext, scenarioConfig, scenarioAreas, scenarioPaths, activeScenarioPulsePath, staticScenarioPaths, pulseRoutes, pulseEnabled, pulseActivePlanOnly, reducedMotion, cityOverviewMode, executionFrame, executionIntersections, executionOnsiteNodes, executionRoadCues, executionTrafficTrips, executionUnits, routePulseAllowed, taskRoutesVisible])
 
   useEffect(() => {
     drawRef.current = draw
@@ -2762,6 +2779,18 @@ export const CityMap = memo(function CityMap({
       data-city-massing={cityMassingOn ? 'on' : 'off'}
       data-map-style-loaded={ready && map.current?.isStyleLoaded() ? 'true' : 'false'}
       data-scenario-route-count={scenarioRouting.paths.length}
+      data-scenario-route-metrics={JSON.stringify(scenarioRouting.paths
+        .filter((path) => path.layer === 'routes')
+        .map((path) => ({
+          label: path.displayLabel ?? path.endpointLabels[0],
+          lengthMeters: Math.round(path.path.slice(1).reduce(
+            (total, point, index) => total + meters(path.path[index], point),
+            0,
+          )),
+          points: path.path.length,
+        })))}
+      data-static-scenario-route-count={staticScenarioPaths.filter((path) => path.layer === 'routes').length}
+      data-active-scenario-route={activeScenarioRouteLabel ?? ''}
       data-scenario-route-errors={scenarioRouting.errors.length}
       data-scenario-route-pending={scenarioRouting.pending ? 'true' : 'false'}
       data-scenario-route-endpoints={JSON.stringify(scenarioRouting.paths.map((path) => path.endpointLabels))}
@@ -2772,7 +2801,7 @@ export const CityMap = memo(function CityMap({
       data-route-pulse={JSON.stringify({
         enabled: pulseEnabled,
         allowed: routePulseAllowed,
-        scope: pulseActivePlanOnly ? 'active-plan' : 'all',
+        scope: activeScenarioRouteLabel ? 'active-scenario-route' : pulseActivePlanOnly ? 'active-plan' : 'all',
         cycleMs: PULSE_CYCLE_MS,
         pulseCount: PULSE_COUNT,
         trail: PULSE_TRAIL,
