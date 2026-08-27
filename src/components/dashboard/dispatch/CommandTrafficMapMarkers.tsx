@@ -78,23 +78,71 @@ export const CommandMedicalMapMarker = memo(function CommandMedicalMapMarker({
     : '市一医院'
 
   return (
-    <DraggableUnitMarker
-      map={map}
-      unit={unit}
-      targetPath={targetPath}
-      enabled={interaction.enabled}
-      kind="medical"
-      testId="draggable-medical-unit"
-      dragHint={`拖到${targetLabel}路线`}
-      compactHint="预览 · 未下发"
-      keyboardInstruction={`按住拖动到${targetLabel}路线；键盘按回车可生成同一换院预览`}
-      onDrop={(routeProgress) => interaction.onDrop({
-        facilityId: interaction.targetFacilityId,
-        routeProgress,
-      })}
-    />
+    <>
+      {targetPath && (
+        <MedicalRouteTargetMarker
+          map={map}
+          path={targetPath}
+          facilityId={interaction.targetFacilityId}
+          label={`${targetLabel}候选路线`}
+        />
+      )}
+      <DraggableUnitMarker
+        map={map}
+        unit={unit}
+        targetPath={targetPath}
+        enabled={interaction.enabled}
+        kind="medical"
+        testId="draggable-medical-unit"
+        dragHint={`拖到${targetLabel}路线`}
+        compactHint="预览 · 未下发"
+        keyboardInstruction={`按住拖动到${targetLabel}路线；键盘按回车可生成同一换院预览`}
+        onDrop={(routeProgress) => interaction.onDrop({
+          facilityId: interaction.targetFacilityId,
+          routeProgress,
+        })}
+      />
+    </>
   )
 })
+
+function MedicalRouteTargetMarker({
+  map,
+  path,
+  facilityId,
+  label,
+}: {
+  map: MapLibreMap
+  path: Array<[number, number]>
+  facilityId: CommandMedicalDragInteraction['targetFacilityId']
+  label: string
+}) {
+  const element = useMemo(() => {
+    const host = document.createElement('div')
+    host.className = 'command-medical-route-target-marker'
+    host.style.zIndex = '6'
+    return host
+  }, [])
+  const position = path[Math.max(0, Math.min(path.length - 1, Math.round((path.length - 1) * 0.28)))]
+
+  useEffect(() => {
+    const marker = new Marker({ element, anchor: 'center' })
+      .setLngLat(position)
+      .addTo(map)
+    return () => {
+      marker.remove()
+    }
+  }, [element, map, position])
+
+  return createPortal(
+    <div className="command-medical-route-target" data-testid="medical-route-drop-target" data-facility-id={facilityId}>
+      <span aria-hidden="true" />
+      <strong>{label}</strong>
+      <small>拖放到这里预览</small>
+    </div>,
+    element,
+  )
+}
 
 function useMapStyleReady(map: MapLibreMap | null) {
   const [ready, setReady] = useState(false)
