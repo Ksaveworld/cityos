@@ -100,6 +100,7 @@ export const CommandWorkbench = memo(function CommandWorkbench({ event, renderMa
   const [advisorInput, setAdvisorInput] = useState('')
   const [reducedMotion, setReducedMotion] = useState(false)
   const [trafficRecalculationProgress, setTrafficRecalculationProgress] = useState(0)
+  const [medicalRecalculationProgress, setMedicalRecalculationProgress] = useState(0)
   const [advisorMessages, setAdvisorMessages] = useState<AdvisorMessage[]>([
     {
       id: 'assistant-boundary',
@@ -144,12 +145,11 @@ export const CommandWorkbench = memo(function CommandWorkbench({ event, renderMa
       })
     }
     if (scenario === 'medical') {
-      const accepted = ['acknowledged', 'en-route', 'arrived'].includes(state.medical.phase)
       return createCommandExecutionFrame({
         id: 'medical-panfu-transfer',
         label: '救护车 AMB-02',
         kind: 'medical',
-        routeRole: accepted ? 'secondary' : 'primary',
+        routeRole: state.medical.selectedFacilityId === 'facility-red-cross' ? 'secondary' : 'primary',
         progress: state.medical.ambulanceProgress,
         phase: state.medical.phase,
       })
@@ -196,6 +196,27 @@ export const CommandWorkbench = memo(function CommandWorkbench({ event, renderMa
     return () => window.clearInterval(timer)
   }, [reducedMotion, state.traffic.phase])
 
+  useEffect(() => {
+    if (state.medical.phase !== 'recalculating') {
+      setMedicalRecalculationProgress(0)
+      return undefined
+    }
+
+    const durationMs = reducedMotion ? 180 : 1100
+    const startedAt = performance.now()
+    setMedicalRecalculationProgress(8)
+    const timer = window.setInterval(() => {
+      const elapsed = performance.now() - startedAt
+      const progress = Math.min(100, Math.round(8 + (elapsed / durationMs) * 92))
+      setMedicalRecalculationProgress(progress)
+      if (progress < 100) return
+      window.clearInterval(timer)
+      dispatch({ type: 'medical/recalculation-complete' })
+    }, reducedMotion ? 60 : 90)
+
+    return () => window.clearInterval(timer)
+  }, [reducedMotion, state.medical.phase])
+
   const liveMessage = useMemo(() => {
     if (scenario === 'traffic') {
       const traffic = state.traffic
@@ -207,8 +228,8 @@ export const CommandWorkbench = memo(function CommandWorkbench({ event, renderMa
     }
     if (scenario === 'medical') {
       const medical = state.medical
-      if (medical.phase === 'preview') return '已生成红十字会医院转运预览，当前 v1 指令仍有效。'
-      if (medical.phase === 'awaiting-approval') return '医疗方案更新为 v2，需要重新人工批准。'
+      if (medical.phase === 'recalculating') return '救护车已绑定红十字会医院路线，正在重算新转运方案。'
+      if (medical.phase === 'awaiting-approval') return '医疗方案 v2 已生成，地图预览已切换，需要重新人工批准。'
       if (medical.phase === 'acknowledged') return '新转运任务已模拟签收，等待指挥员开始执行。'
       if (medical.phase === 'en-route') return '新转运任务开始执行，救护车沿新路线移动。'
       if (medical.phase === 'arrived') return '救护车已模拟抵达新接收点。'
@@ -246,14 +267,14 @@ export const CommandWorkbench = memo(function CommandWorkbench({ event, renderMa
               dispatch({ type: 'traffic/drop-reroute', routeProgress: 0.43 })
             }
             if (scenario === 'medical' && label === '广州市红十字会医院') {
-              dispatch({ type: 'medical/select-red-cross' })
+              dispatch({ type: 'medical/drop-reroute', routeProgress: 0.41 })
             }
           },
         })}
         traffic={state.traffic}
         medical={state.medical}
         onTrafficDrop={(routeProgress) => dispatch({ type: 'traffic/drop-reroute', routeProgress })}
-        onMedicalSelect={() => dispatch({ type: 'medical/select-red-cross' })}
+        onMedicalDrop={(routeProgress) => dispatch({ type: 'medical/drop-reroute', routeProgress })}
       />
 
       <aside className="command-plan-panel" aria-label="动态方案与任务">
@@ -276,7 +297,9 @@ export const CommandWorkbench = memo(function CommandWorkbench({ event, renderMa
           {scenario === 'traffic' && (
             <TrafficPlan state={state.traffic} recalculationProgress={trafficRecalculationProgress} />
           )}
-          {scenario === 'medical' && <MedicalPlan state={state.medical} />}
+          {scenario === 'medical' && (
+            <MedicalPlan state={state.medical} recalculationProgress={medicalRecalculationProgress} />
+          )}
           {scenario === 'city-order' && (
             <EvidencePlan
               evidence={state.evidence}
@@ -352,9 +375,7 @@ export const CommandWorkbench = memo(function CommandWorkbench({ event, renderMa
               else if (state.traffic.phase === 'arrived') dispatch({ type: 'traffic/reset' })
             }
             if (scenario === 'medical') {
-              if (state.medical.phase === 'blocked') dispatch({ type: 'medical/select-red-cross' })
-              else if (state.medical.phase === 'preview') dispatch({ type: 'medical/submit-adjustment' })
-              else if (state.medical.phase === 'awaiting-approval') dispatch({ type: 'medical/approve' })
+              if (state.medical.phase === 'awaiting-approval') dispatch({ type: 'medical/approve' })
               else if (state.medical.phase === 'approved') dispatch({ type: 'medical/issue' })
               else if (state.medical.phase === 'sent-awaiting-ack') dispatch({ type: 'medical/acknowledge' })
               else if (state.medical.phase === 'acknowledged') dispatch({ type: 'medical/start-execution' })
@@ -434,7 +455,7 @@ function TrafficPlan({
           title="车辆已切换到路线 C 预览"
           body="地图已按负责人的拖拽选择更新；系统正在重算风险、负责人和任务清单。"
         />
-        <PlanRecalculationProgress progress={recalculationProgress} />
+        <PlanRecalculationProgress progress={recalculationProgress} scenario="traffic" />
         <PlanMetrics
           items={[
             ['地图状态', '路线 C · 调整预览'],
@@ -487,14 +508,20 @@ function TrafficPlan({
   )
 }
 
-function PlanRecalculationProgress({ progress }: { progress: number }) {
+function PlanRecalculationProgress({
+  progress,
+  scenario,
+}: {
+  progress: number
+  scenario: 'traffic' | 'medical'
+}) {
   const stage = progress < 36
-    ? '捕捉车辆与目标道路'
+    ? scenario === 'medical' ? '绑定救护车与候选接收路线' : '捕捉车辆与目标道路'
     : progress < 72
-      ? '重算路网与风险清单'
+      ? scenario === 'medical' ? '重算 ETA、风险与联络责任' : '重算路网与风险清单'
       : '生成新方案与任务草案'
   return (
-    <section className="command-plan-loading" data-testid="traffic-plan-loading">
+    <section className="command-plan-loading" data-testid={`${scenario}-plan-loading`}>
       <div className="command-plan-loading-heading">
         <span className="command-plan-loading-spinner"><LoaderCircle size={16} /></span>
         <div><strong>{stage}</strong><small>本地模拟重算</small></div>
@@ -503,7 +530,7 @@ function PlanRecalculationProgress({ progress }: { progress: number }) {
       <div
         className="command-plan-loading-track"
         role="progressbar"
-        aria-label="路线 C 方案生成进度"
+        aria-label={scenario === 'medical' ? '红十字会医院转运方案生成进度' : '路线 C 方案生成进度'}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={progress}
@@ -511,17 +538,46 @@ function PlanRecalculationProgress({ progress }: { progress: number }) {
         <span style={{ width: `${progress}%` }} />
       </div>
       <div className="command-plan-loading-steps" aria-hidden="true">
-        <span data-done={progress >= 12}>道路绑定</span>
-        <span data-done={progress >= 48}>风险同步</span>
+        <span data-done={progress >= 12}>{scenario === 'medical' ? '接收路线绑定' : '道路绑定'}</span>
+        <span data-done={progress >= 48}>{scenario === 'medical' ? 'ETA 与风险同步' : '风险同步'}</span>
         <span data-done={progress >= 82}>方案成稿</span>
       </div>
     </section>
   )
 }
 
-function MedicalPlan({ state }: { state: ReturnType<typeof createInitialCommandWorkbenchState>['medical'] }) {
+function MedicalPlan({
+  state,
+  recalculationProgress,
+}: {
+  state: ReturnType<typeof createInitialCommandWorkbenchState>['medical']
+  recalculationProgress: number
+}) {
   const redCrossSelected = state.selectedFacilityId === 'facility-red-cross'
   const replacementAccepted = ['acknowledged', 'en-route', 'arrived'].includes(state.phase)
+
+  if (state.phase === 'recalculating') {
+    return (
+      <>
+        <PlanNotice
+          tone="blue"
+          icon={Route}
+          title="救护车已切换到红十字会医院路线预览"
+          body="地图已按负责人的拖拽选择更新；系统正在重算 ETA、风险、联络负责人和任务清单。"
+        />
+        <PlanRecalculationProgress progress={recalculationProgress} scenario="medical" />
+        <PlanMetrics
+          items={[
+            ['地图状态', '红十字会医院路线 · 调整预览'],
+            ['车辆状态', '停在拖放位置'],
+            ['任务状态', '旧任务尚未失效'],
+            ['人工权限', '新方案生成后批准与下发'],
+          ]}
+        />
+      </>
+    )
+  }
+
   return (
     <>
       <PlanNotice
@@ -541,8 +597,8 @@ function MedicalPlan({ state }: { state: ReturnType<typeof createInitialCommandW
 
       <PlanMetrics
         items={[
-          ['当前执行', replacementAccepted ? '红十字会医院' : '市一医院 · 至安全分叉点'],
-          ['调整预览', redCrossSelected ? '红十字会医院 · 10±2 分钟' : '尚未生成'],
+          ['地图预览', redCrossSelected ? '红十字会医院路线 · 已切换' : '市一医院路线 · 执行异常'],
+          ['方案状态', replacementAccepted ? '新转运方案执行中' : redCrossSelected ? '待负责人批准与下发' : '等待地图调整'],
           ['执行单位', '救护车 AMB-02 · 保留'],
           ['联络负责人', replacementAccepted ? '转运协调负责人' : redCrossSelected ? '候选：转运协调负责人' : '急救联络负责人'],
         ]}
@@ -705,11 +761,13 @@ function CommandApprovalFooter({
   if (scenario === 'traffic' && phase === 'recalculating') {
     return <footer className="command-approval-footer is-muted"><LoaderCircle size={14} /><span>地图已切换，正在生成新的方案与任务草案。</span></footer>
   }
-  const action = phase === 'blocked'
-    ? { label: '选择红十字会医院', icon: Route }
-    : phase === 'preview'
-      ? { label: '提交调整并生成新版本', icon: Play }
-    : phase === 'awaiting-approval'
+  if (scenario === 'medical' && phase === 'blocked') {
+    return <footer className="command-approval-footer is-muted"><Route size={14} /><span>请在地图上按住救护车 AMB-02，拖到青色候选路线。</span></footer>
+  }
+  if (scenario === 'medical' && phase === 'recalculating') {
+    return <footer className="command-approval-footer is-muted"><LoaderCircle size={14} /><span>地图已切换，正在生成新的转运方案与任务草案。</span></footer>
+  }
+  const action = phase === 'awaiting-approval'
         ? { label: scenario === 'traffic' ? '负责人确认并下发改线 v2' : '人工批准 转运 v2', icon: LockKeyhole }
         : phase === 'approved'
           ? { label: '模拟发送任务包', icon: Send }
@@ -735,7 +793,7 @@ function advisorResponse(scenario: CommandScenarioId, text: string) {
     if (text.includes('比较') || text.includes('路线')) return '三条路线的时间已直接标在线路上方。路线 B 已受阻，路线 C 绕开阻塞且短于常规路线 A；拖动车辆只改变地图预览，新方案仍需负责人确认下发。'
     return '核心参数从路线 B 改为 C 后，旧批准与任务包不能自动继承，否则接收单位可能同时看到两条冲突指令。'
   }
-  if (scenario === 'medical') return '建议保留同一辆在途救护车，只更换接收点、路线和联络负责人。红十字会医院状态仍需人工联络确认。'
+  if (scenario === 'medical') return '拖动救护车会立即把地图预览切换到红十字会医院路线，并生成新的 ETA、风险与任务草案；红十字会医院状态仍需人工联络确认，方案下发仍需负责人批准。'
   if (scenario === 'city-order') return '先核实图片、语音和视频是否指向同一处通道；待核实证据不应直接改变处置方案。'
   return `我可以为“${text}”整理草案和影响清单，但需要指挥员在地图和动态方案区人工确认。`
 }

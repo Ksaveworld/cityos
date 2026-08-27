@@ -270,6 +270,16 @@ button.command-route-preview:hover {
   color: #237a52;
 }
 
+.command-drag-guide.is-medical {
+  border-color: rgb(14 154 167 / 0.34);
+}
+
+.command-drag-guide.is-medical > span,
+.command-drag-guide.is-medical.is-preview > span {
+  background: #e8f7f8;
+  color: #0b7f8a;
+}
+
 .command-route-label-marker {
   pointer-events: none;
 }
@@ -435,6 +445,30 @@ button.command-route-preview:hover {
 
 .command-traffic-unit-marker[data-draggable='false'] .command-traffic-unit-icon {
   background: #30a46c;
+}
+
+.command-traffic-unit-marker[data-kind='medical'] .command-traffic-unit-halo {
+  border-color: rgb(14 154 167 / 0.3);
+  background: rgb(14 154 167 / 0.1);
+}
+
+.command-traffic-unit-marker[data-kind='medical'] .command-traffic-unit-icon,
+.command-traffic-unit-marker[data-kind='medical'][data-draggable='false'] .command-traffic-unit-icon {
+  background: #0e9aa7;
+}
+
+.command-traffic-unit-marker[data-kind='medical'] .command-traffic-unit-icon::after {
+  mask-image: url('/assets/third-party/material-symbols/ambulance.svg');
+}
+
+.command-traffic-unit-marker[data-kind='medical'][data-valid-drop='true'] .command-traffic-unit-icon {
+  background: #0b7f8a;
+  box-shadow: 0 0 0 5px rgb(14 154 167 / 0.18), 0 4px 12px rgb(38 50 72 / 0.2);
+}
+
+.command-traffic-unit-marker[data-kind='medical'] .command-traffic-unit-label small,
+.command-traffic-unit[data-kind='medical'] .command-traffic-unit-label[data-compact='true'] small {
+  color: #0b7f8a;
 }
 
 @keyframes command-unit-breathe {

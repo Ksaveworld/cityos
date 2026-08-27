@@ -12,11 +12,24 @@ export interface CommandTrafficDragInteraction {
   onDrop: (drop: CommandTrafficRouteDrop) => void
 }
 
-export interface CommandMapInteractionValue {
-  traffic: CommandTrafficDragInteraction | null
+export interface CommandMedicalRouteDrop {
+  facilityId: 'facility-red-cross'
+  routeProgress: number
 }
 
-const EMPTY_INTERACTION: CommandMapInteractionValue = { traffic: null }
+export interface CommandMedicalDragInteraction {
+  enabled: boolean
+  selectedFacilityId: 'facility-shiyi' | 'facility-red-cross'
+  targetFacilityId: 'facility-red-cross'
+  onDrop: (drop: CommandMedicalRouteDrop) => void
+}
+
+export interface CommandMapInteractionValue {
+  traffic: CommandTrafficDragInteraction | null
+  medical: CommandMedicalDragInteraction | null
+}
+
+const EMPTY_INTERACTION: CommandMapInteractionValue = { traffic: null, medical: null }
 export const CommandMapInteractionContext = createContext<CommandMapInteractionValue>(EMPTY_INTERACTION)
 
 export function useCommandMapInteraction() {

@@ -46,7 +46,9 @@ import type { MapLayerVisibility } from '@/components/dashboard/mapLayers'
 import type { RoutineHospitalTransfer } from '@/components/dashboard/dispatch/hospitalStrategyRoutes'
 import { useCommandMapInteraction } from '@/components/dashboard/dispatch/CommandMapInteractionContext'
 import {
+  CommandMedicalMapMarker,
   CommandTrafficMapMarkers,
+  type CommandMedicalUnitMarkerDatum,
   type CommandTrafficRouteAnnotation,
   type CommandTrafficUnitMarkerDatum,
 } from '@/components/dashboard/dispatch/CommandTrafficMapMarkers'
@@ -1654,11 +1656,17 @@ export const CityMap = memo(function CityMap({
     [scenarioRouting.paths, layers],
   )
   const activeScenarioRouteLabel = useMemo(() => {
-    if (scenarioVariant !== 'traffic' || executionFrame?.definitionId !== 'traffic-zhongshan-reroute') return null
+    if (!executionFrame) return null
     const routeRole = executionFrame.units[0]?.routeRole
-    // 交通工作台用 secondary / medical 分别绑定冻结后的 B / C 路网几何。
-    if (routeRole === 'secondary') return '路线 B · 原最短 8 分钟 · 已受阻'
-    if (routeRole === 'medical') return '路线 C · 推荐改线 10 分钟'
+    if (scenarioVariant === 'traffic' && executionFrame.definitionId === 'traffic-zhongshan-reroute') {
+      // 交通工作台用 secondary / medical 分别绑定冻结后的 B / C 路网几何。
+      if (routeRole === 'secondary') return '路线 B · 原最短 8 分钟 · 已受阻'
+      if (routeRole === 'medical') return '路线 C · 推荐改线 10 分钟'
+    }
+    if (scenarioVariant === 'medical' && executionFrame.definitionId === 'medical-panfu-transfer') {
+      if (routeRole === 'primary') return '原接收路线 · 市一医院'
+      if (routeRole === 'secondary') return '候选转运路线 · 红十字会医院'
+    }
     return null
   }, [executionFrame, scenarioVariant])
   const activeScenarioPulsePath = useMemo(
@@ -1759,7 +1767,7 @@ export const CityMap = memo(function CityMap({
     return scenarioPaths.filter((path) => path !== activeScenarioPulsePath)
   }, [activeScenarioPulsePath, pulseEnabled, scenarioPaths, taskRoutesVisible])
   const staticScenarioRouteArrows = useMemo<ScenarioRouteArrowDatum[]>(() => {
-    if (scenarioVariant !== 'traffic') return []
+    if (scenarioVariant !== 'traffic' && scenarioVariant !== 'medical') return []
     return staticScenarioPaths
       .filter((path) => path.layer === 'routes' && path.path.length >= 2)
       .flatMap((path, pathIndex) => [0.38, 0.66].map((progress, arrowIndex) => {
@@ -1816,11 +1824,30 @@ export const CityMap = memo(function CityMap({
       status: unit.status,
     } : null
   }, [commandMapInteraction.traffic, executionUnits, scenarioVariant])
+  const commandMedicalTargetPath = useMemo(() => {
+    if (scenarioVariant !== 'medical' || !commandMapInteraction.medical) return null
+    return scenarioPaths.find((path) => (
+      path.layer === 'routes'
+      && path.displayLabel === '候选转运路线 · 红十字会医院'
+      && path.path.length >= 2
+    ))?.path ?? null
+  }, [commandMapInteraction.medical, scenarioPaths, scenarioVariant])
+  const commandMedicalUnit = useMemo<CommandMedicalUnitMarkerDatum | null>(() => {
+    if (scenarioVariant !== 'medical' || !commandMapInteraction.medical) return null
+    const unit = executionUnits.find((candidate) => candidate.kind === 'medical')
+    return unit ? {
+      id: unit.id,
+      label: unit.label,
+      position: unit.position,
+      status: unit.status,
+    } : null
+  }, [commandMapInteraction.medical, executionUnits, scenarioVariant])
   const deckExecutionUnits = useMemo(
-    () => commandTrafficUnit
-      ? executionUnits.filter((unit) => unit.kind !== 'traffic')
-      : executionUnits,
-    [commandTrafficUnit, executionUnits],
+    () => executionUnits.filter((unit) => (
+      !(commandTrafficUnit && unit.kind === 'traffic')
+      && !(commandMedicalUnit && unit.kind === 'medical')
+    )),
+    [commandMedicalUnit, commandTrafficUnit, executionUnits],
   )
   const executionIntersections = useMemo<ExecutionIntersectionDatum[]>(() => {
     if (!executionFrame) return []
@@ -2881,6 +2908,7 @@ export const CityMap = memo(function CityMap({
       data-static-route-arrow-count={staticScenarioRouteArrows.length}
       data-command-route-label-count={commandTrafficRoutes.length}
       data-traffic-drag-enabled={commandMapInteraction.traffic?.enabled ? 'true' : 'false'}
+      data-medical-drag-enabled={commandMapInteraction.medical?.enabled ? 'true' : 'false'}
       data-active-scenario-route={activeScenarioRouteLabel ?? ''}
       data-scenario-route-errors={scenarioRouting.errors.length}
       data-scenario-route-pending={scenarioRouting.pending ? 'true' : 'false'}
@@ -2949,6 +2977,14 @@ export const CityMap = memo(function CityMap({
           routes={commandTrafficRoutes}
           unit={commandTrafficUnit}
           interaction={commandMapInteraction.traffic}
+        />
+      )}
+      {commandMapInteraction.medical && (
+        <CommandMedicalMapMarker
+          map={ready ? map.current : null}
+          targetPath={commandMedicalTargetPath}
+          unit={commandMedicalUnit}
+          interaction={commandMapInteraction.medical}
         />
       )}
 

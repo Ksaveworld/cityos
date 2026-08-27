@@ -14,7 +14,7 @@ interface CommandTacticalMapProps {
   traffic: TrafficCommandState
   medical: MedicalCommandState
   onTrafficDrop: (routeProgress: number) => void
-  onMedicalSelect: () => void
+  onMedicalDrop: (routeProgress: number) => void
 }
 
 export const CommandTacticalMap = memo(function CommandTacticalMap({
@@ -23,7 +23,7 @@ export const CommandTacticalMap = memo(function CommandTacticalMap({
   traffic,
   medical,
   onTrafficDrop,
-  onMedicalSelect,
+  onMedicalDrop,
 }: CommandTacticalMapProps) {
   const title = scenario === 'traffic'
     ? '中山路清障车在途改线'
@@ -41,7 +41,15 @@ export const CommandTacticalMap = memo(function CommandTacticalMap({
           onDrop: ({ routeProgress }: { routeId: 'C'; routeProgress: number }) => onTrafficDrop(routeProgress),
         }
       : null,
-  }), [onTrafficDrop, scenario, traffic.activeRouteId, traffic.phase])
+    medical: scenario === 'medical'
+      ? {
+          enabled: medical.phase === 'blocked' && medical.selectedFacilityId === 'facility-shiyi',
+          selectedFacilityId: medical.selectedFacilityId,
+          targetFacilityId: 'facility-red-cross' as const,
+          onDrop: ({ routeProgress }: { facilityId: 'facility-red-cross'; routeProgress: number }) => onMedicalDrop(routeProgress),
+        }
+      : null,
+  }), [medical.phase, medical.selectedFacilityId, onMedicalDrop, onTrafficDrop, scenario, traffic.activeRouteId, traffic.phase])
 
   return (
     <section className="command-map-panel" aria-label={`${title}地图`}>
@@ -62,7 +70,7 @@ export const CommandTacticalMap = memo(function CommandTacticalMap({
         data-execution-route={scenario === 'traffic'
           ? traffic.activeRouteId
           : scenario === 'medical'
-            ? ['acknowledged', 'en-route', 'arrived'].includes(medical.phase) ? 'red-cross' : 'shiyi'
+            ? medical.selectedFacilityId === 'facility-red-cross' ? 'red-cross' : 'shiyi'
             : ''}
         data-vehicle-progress={scenario === 'traffic'
           ? traffic.carProgress.toFixed(3)
@@ -78,7 +86,7 @@ export const CommandTacticalMap = memo(function CommandTacticalMap({
           <TrafficDragGuide traffic={traffic} />
         )}
         {scenario === 'medical' && (
-          <MedicalMapHint medical={medical} onSelect={onMedicalSelect} />
+          <MedicalDragGuide medical={medical} />
         )}
         {scenario === 'city-order' && (
           <div className="command-map-context-note">
@@ -109,19 +117,15 @@ function TrafficDragGuide({ traffic }: { traffic: TrafficCommandState }) {
   )
 }
 
-function MedicalMapHint({ medical, onSelect }: { medical: MedicalCommandState; onSelect: () => void }) {
+function MedicalDragGuide({ medical }: { medical: MedicalCommandState }) {
   const selected = medical.selectedFacilityId === 'facility-red-cross'
   return (
-    <div className="command-route-controls is-medical">
-      <div className="command-map-context-note is-inline">
-        <strong>{selected ? '红十字会医院路线已预览' : '市一医院接收能力下降（模拟）'}</strong>
-        <span>{selected ? '新路线沿路网显示，尚未提交或批准。' : '请点选地图上的红十字会医院，或使用下方按钮。'}</span>
+    <div className={`command-drag-guide is-medical ${selected ? 'is-preview' : ''}`} aria-live="polite">
+      <span><Route size={15} /></span>
+      <div>
+        <strong>{selected ? '红十字会医院路线已绑定预览' : '直接拖动救护车更换接收路线'}</strong>
+        <small>{selected ? '地图已切换；新转运方案尚未人工批准下发' : '按住救护车 AMB-02，拖到青色候选路线'}</small>
       </div>
-      {!selected && (
-        <button type="button" className="command-route-preview" onClick={onSelect}>
-          选择红十字会医院 · 只生成 Preview
-        </button>
-      )}
     </div>
   )
 }

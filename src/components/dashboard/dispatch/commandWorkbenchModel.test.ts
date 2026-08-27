@@ -65,26 +65,58 @@ test('traffic route C preview is immediate but the replacement task still requir
   assert.equal(state.traffic.carProgress, 1)
 })
 
-test('medical scenario keeps AMB-02 and changes only facility, route and versioned task', () => {
+test('dragging AMB-02 switches the medical map preview before recalculation invalidates v1', () => {
   let state = createInitialCommandWorkbenchState()
-  state = commandWorkbenchReducer(state, { type: 'medical/select-red-cross' })
+  state = commandWorkbenchReducer(state, { type: 'medical/tick', delta: 1 })
+  assert.ok(
+    Math.abs(state.medical.ambulanceProgress - 0.1950485337) < 1e-10,
+    'ambulance waits at the safe decision point on the original hospital route',
+  )
 
-  assert.equal(state.medical.phase, 'preview')
+  state = commandWorkbenchReducer(state, { type: 'medical/drop-reroute', routeProgress: 0.41 })
+
+  assert.equal(state.medical.phase, 'recalculating')
   assert.equal(state.medical.selectedFacilityId, 'facility-red-cross')
+  assert.equal(state.medical.ambulanceProgress, 0.41)
   assert.equal(state.medical.planVersion, 1)
   assert.equal(state.medical.approvedVersion, 1)
   assert.equal(state.medical.taskStatus, 'en-route')
   assert.equal(state.medical.previousTask, null)
+  assert.equal(
+    commandWorkbenchReducer(state, { type: 'medical/tick', delta: 0.1 }).medical.ambulanceProgress,
+    0.41,
+    'medical map preview stays at the dropped position while the replacement plan is generated',
+  )
 
-  state = commandWorkbenchReducer(state, { type: 'medical/submit-adjustment' })
+  state = commandWorkbenchReducer(state, { type: 'medical/recalculation-complete' })
+  assert.equal(state.medical.phase, 'awaiting-approval')
+  assert.equal(state.medical.planVersion, 2)
+  assert.equal(state.medical.approvedVersion, null)
+  assert.equal(state.medical.taskStatus, 'invalidated')
   assert.deepEqual(state.medical.previousTask, { version: 1, status: 'invalidated' })
+})
+
+test('medical route preview is immediate but the replacement task still requires approval and delivery', () => {
+  let state = createInitialCommandWorkbenchState()
+  state = commandWorkbenchReducer(state, { type: 'medical/drop-reroute', routeProgress: 0.41 })
+  state = commandWorkbenchReducer(state, { type: 'medical/recalculation-complete' })
   state = commandWorkbenchReducer(state, { type: 'medical/approve' })
+  assert.equal(state.medical.phase, 'approved')
+  assert.equal(state.medical.approvedVersion, 2)
+  assert.equal(state.medical.taskStatus, 'pending-send')
+
   state = commandWorkbenchReducer(state, { type: 'medical/issue' })
   assert.equal(state.medical.phase, 'sent-awaiting-ack')
 
+  const previewProgressOnRedCrossRoute = state.medical.ambulanceProgress
   state = commandWorkbenchReducer(state, { type: 'medical/acknowledge' })
   assert.equal(state.medical.phase, 'acknowledged')
   assert.deepEqual(state.medical.previousTask, { version: 1, status: 'replaced' })
+  assert.equal(
+    state.medical.ambulanceProgress,
+    previewProgressOnRedCrossRoute,
+    'acknowledgement does not move an ambulance already placed on the replacement route',
+  )
   state = commandWorkbenchReducer(state, { type: 'medical/start-execution' })
   state = commandWorkbenchReducer(state, { type: 'medical/tick', delta: 1 })
   assert.equal(state.medical.planVersion, 2)

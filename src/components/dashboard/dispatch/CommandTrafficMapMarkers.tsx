@@ -2,7 +2,10 @@ import { memo, useEffect, useMemo, useRef, useState, type CSSProperties } from '
 import { createPortal } from 'react-dom'
 import { Marker, type Map as MapLibreMap } from 'maplibre-gl'
 
-import type { CommandTrafficDragInteraction } from './CommandMapInteractionContext'
+import type {
+  CommandMedicalDragInteraction,
+  CommandTrafficDragInteraction,
+} from './CommandMapInteractionContext'
 
 export interface CommandTrafficRouteAnnotation {
   routeId: 'A' | 'B' | 'C'
@@ -21,6 +24,8 @@ export interface CommandTrafficUnitMarkerDatum {
   position: [number, number]
   status: 'waiting' | 'enroute' | 'arrived'
 }
+
+export type CommandMedicalUnitMarkerDatum = CommandTrafficUnitMarkerDatum
 
 const DROP_TOLERANCE_PX = 48
 
@@ -51,6 +56,40 @@ export const CommandTrafficMapMarkers = memo(function CommandTrafficMapMarkers({
         />
       )}
     </>
+  )
+})
+
+export const CommandMedicalMapMarker = memo(function CommandMedicalMapMarker({
+  map,
+  targetPath,
+  unit,
+  interaction,
+}: {
+  map: MapLibreMap | null
+  targetPath: Array<[number, number]> | null
+  unit: CommandMedicalUnitMarkerDatum | null
+  interaction: CommandMedicalDragInteraction
+}) {
+  const styleReady = useMapStyleReady(map)
+
+  if (!map || !styleReady || !unit) return null
+
+  return (
+    <DraggableUnitMarker
+      map={map}
+      unit={unit}
+      targetPath={targetPath}
+      enabled={interaction.enabled}
+      kind="medical"
+      testId="draggable-medical-unit"
+      dragHint="拖到青色候选路线"
+      compactHint="预览 · 未下发"
+      keyboardInstruction="按住拖动到红十字会医院候选路线；键盘按回车可生成同一换院预览"
+      onDrop={(routeProgress) => interaction.onDrop({
+        facilityId: interaction.targetFacilityId,
+        routeProgress,
+      })}
+    />
   )
 })
 
@@ -123,36 +162,78 @@ function TrafficUnitMarker({
   targetRoute: CommandTrafficRouteAnnotation | null
   interaction: CommandTrafficDragInteraction
 }) {
+  return (
+    <DraggableUnitMarker
+      map={map}
+      unit={unit}
+      targetPath={targetRoute?.path ?? null}
+      enabled={interaction.enabled}
+      kind="traffic"
+      testId="draggable-traffic-unit"
+      dragHint="拖到绿色 C 路线"
+      compactHint="预览 · 未下发"
+      keyboardInstruction="按住拖动到绿色路线 C；键盘按回车可生成同一改线预览"
+      onDrop={(routeProgress) => interaction.onDrop({ routeId: 'C', routeProgress })}
+    />
+  )
+}
+
+function DraggableUnitMarker({
+  map,
+  unit,
+  targetPath,
+  enabled,
+  kind,
+  testId,
+  dragHint,
+  compactHint,
+  keyboardInstruction,
+  onDrop,
+}: {
+  map: MapLibreMap
+  unit: CommandTrafficUnitMarkerDatum
+  targetPath: Array<[number, number]> | null
+  enabled: boolean
+  kind: 'traffic' | 'medical'
+  testId: string
+  dragHint: string
+  compactHint: string
+  keyboardInstruction: string
+  onDrop: (routeProgress: number) => void
+}) {
   const element = useMemo(() => {
     const host = document.createElement('div')
     host.className = 'command-traffic-unit-marker'
     host.style.zIndex = '7'
+    host.dataset.kind = kind
     return host
-  }, [])
+  }, [kind])
   const markerRef = useRef<Marker | null>(null)
   const draggingRef = useRef(false)
   const positionRef = useRef(unit.position)
-  const targetRouteRef = useRef(targetRoute)
-  const interactionRef = useRef(interaction)
+  const targetPathRef = useRef(targetPath)
+  const enabledRef = useRef(enabled)
+  const onDropRef = useRef(onDrop)
   positionRef.current = unit.position
-  targetRouteRef.current = targetRoute
-  interactionRef.current = interaction
+  targetPathRef.current = targetPath
+  enabledRef.current = enabled
+  onDropRef.current = onDrop
 
   useEffect(() => {
-    const marker = new Marker({ element, anchor: 'center', draggable: interactionRef.current.enabled })
+    const marker = new Marker({ element, anchor: 'center', draggable: enabledRef.current })
       .setLngLat(positionRef.current)
       .addTo(map)
     markerRef.current = marker
     let restoreDragPan = false
 
     const updateDropState = () => {
-      const route = targetRouteRef.current
-      if (!route) {
+      const path = targetPathRef.current
+      if (!path) {
         element.dataset.validDrop = 'false'
         return null
       }
       const lngLat = marker.getLngLat()
-      const snap = nearestRouteSnap(map, [lngLat.lng, lngLat.lat], route.path)
+      const snap = nearestRouteSnap(map, [lngLat.lng, lngLat.lat], path)
       element.dataset.validDrop = snap.distancePixels <= DROP_TOLERANCE_PX ? 'true' : 'false'
       return snap
     }
@@ -172,9 +253,9 @@ function TrafficUnitMarker({
       if (restoreDragPan) map.dragPan.enable()
       restoreDragPan = false
 
-      if (snap && snap.distancePixels <= DROP_TOLERANCE_PX && interactionRef.current.enabled) {
+      if (snap && snap.distancePixels <= DROP_TOLERANCE_PX && enabledRef.current) {
         marker.setLngLat(snap.position)
-        interactionRef.current.onDrop({ routeId: 'C', routeProgress: snap.progress })
+        onDropRef.current(snap.progress)
       } else {
         marker.setLngLat(positionRef.current)
       }
@@ -194,28 +275,29 @@ function TrafficUnitMarker({
   }, [element, map])
 
   useEffect(() => {
-    markerRef.current?.setDraggable(interaction.enabled)
-    element.dataset.draggable = interaction.enabled ? 'true' : 'false'
-  }, [element, interaction.enabled])
+    markerRef.current?.setDraggable(enabled)
+    element.dataset.draggable = enabled ? 'true' : 'false'
+  }, [element, enabled])
 
   useEffect(() => {
     if (!draggingRef.current) markerRef.current?.setLngLat(unit.position)
   }, [unit.position])
 
   const handleKeyboardRouteChange = () => {
-    if (!interaction.enabled || !targetRoute) return
-    const routeProgress = Math.max(0.3, nearestRouteSnap(map, unit.position, targetRoute.path).progress)
-    interaction.onDrop({ routeId: 'C', routeProgress })
+    if (!enabled || !targetPath) return
+    const routeProgress = Math.max(0.3, nearestRouteSnap(map, unit.position, targetPath).progress)
+    onDrop(routeProgress)
   }
 
   return createPortal(
     <div
       className="command-traffic-unit"
-      data-testid="draggable-traffic-unit"
+      data-testid={testId}
+      data-kind={kind}
       data-status={unit.status}
       role="button"
-      tabIndex={interaction.enabled ? 0 : -1}
-      aria-label={`${unit.label}，${interaction.enabled ? '按住拖动到绿色路线 C；键盘按回车可生成同一改线预览' : '当前路线调整预览'}`}
+      tabIndex={enabled ? 0 : -1}
+      aria-label={`${unit.label}，${enabled ? keyboardInstruction : '当前路线调整预览'}`}
       onKeyDown={(event) => {
         if (event.key !== 'Enter' && event.key !== ' ') return
         event.preventDefault()
@@ -224,9 +306,9 @@ function TrafficUnitMarker({
     >
       <span className="command-traffic-unit-halo" aria-hidden="true" />
       <span className="command-traffic-unit-icon" aria-hidden="true" />
-      <span className="command-traffic-unit-label" data-compact={interaction.enabled ? 'false' : 'true'}>
-        {interaction.enabled && <strong>{unit.label}</strong>}
-        <small>{interaction.enabled ? '拖到绿色 C 路线' : '预览 · 未下发'}</small>
+      <span className="command-traffic-unit-label" data-compact={enabled ? 'false' : 'true'}>
+        {enabled && <strong>{unit.label}</strong>}
+        <small>{enabled ? dragHint : compactHint}</small>
       </span>
     </div>,
     element,

@@ -78,8 +78,8 @@ export type CommandWorkbenchAction =
   | { type: 'traffic/acknowledge' }
   | { type: 'traffic/start-execution' }
   | { type: 'traffic/reset' }
-  | { type: 'medical/select-red-cross' }
-  | { type: 'medical/submit-adjustment' }
+  | { type: 'medical/drop-reroute'; routeProgress: number }
+  | { type: 'medical/recalculation-complete' }
   | { type: 'medical/approve' }
   | { type: 'medical/issue' }
   | { type: 'medical/acknowledge' }
@@ -123,8 +123,6 @@ const INITIAL_MEDICAL_STATE: MedicalCommandState = {
 // 车辆最多移动到这处安全决策点。拖放后的位置直接来自地图对路线 C 的吸附进度。
 const TRAFFIC_SAFE_DECISION_PROGRESS_B = 0.2377266150
 const MEDICAL_SAFE_DECISION_PROGRESS_OLD = 0.1950485337
-const MEDICAL_SAFE_DECISION_PROGRESS_NEW = 0.2010776026
-const MEDICAL_OLD_TO_NEW_PROGRESS_RATIO = 1.0309106086
 
 export function createInitialCommandWorkbenchState(): CommandWorkbenchState {
   return {
@@ -245,18 +243,19 @@ export function commandWorkbenchReducer(
       }
     case 'traffic/reset':
       return { ...state, traffic: { ...INITIAL_TRAFFIC_STATE } }
-    case 'medical/select-red-cross':
-      if (!['blocked', 'preview'].includes(state.medical.phase)) return state
+    case 'medical/drop-reroute':
+      if (state.medical.phase !== 'blocked' || state.medical.selectedFacilityId !== 'facility-shiyi') return state
       return {
         ...state,
         medical: {
           ...state.medical,
-          phase: 'preview',
+          phase: 'recalculating',
           selectedFacilityId: 'facility-red-cross',
+          ambulanceProgress: Math.max(0.05, Math.min(0.95, action.routeProgress)),
         },
       }
-    case 'medical/submit-adjustment':
-      if (state.medical.phase !== 'preview') return state
+    case 'medical/recalculation-complete':
+      if (state.medical.phase !== 'recalculating') return state
       return {
         ...state,
         medical: {
@@ -304,10 +303,6 @@ export function commandWorkbenchReducer(
           previousTask: state.medical.previousTask
             ? { ...state.medical.previousTask, status: 'replaced' }
             : null,
-          ambulanceProgress: Math.min(
-            MEDICAL_SAFE_DECISION_PROGRESS_NEW,
-            state.medical.ambulanceProgress * MEDICAL_OLD_TO_NEW_PROGRESS_RATIO,
-          ),
         },
       }
     case 'medical/start-execution':
@@ -317,10 +312,11 @@ export function commandWorkbenchReducer(
         medical: { ...state.medical, phase: 'en-route', taskStatus: 'en-route' },
       }
     case 'medical/tick': {
-      if (['acknowledged', 'arrived'].includes(state.medical.phase)) return state
+      const canAdvance = ['blocked', 'en-route'].includes(state.medical.phase)
+      if (!canAdvance) return state
       const limit = state.medical.phase === 'en-route' ? 1 : MEDICAL_SAFE_DECISION_PROGRESS_OLD
       const ambulanceProgress = Math.min(limit, state.medical.ambulanceProgress + action.delta)
-      const arrived = ambulanceProgress >= 1
+      const arrived = state.medical.phase === 'en-route' && ambulanceProgress >= 1
       return {
         ...state,
         medical: {
