@@ -12,15 +12,17 @@ export interface CommandTrafficDragInteraction {
   onDrop: (drop: CommandTrafficRouteDrop) => void
 }
 
+export type CommandMedicalFacilityId = 'facility-shiyi' | 'facility-red-cross'
+
 export interface CommandMedicalRouteDrop {
-  facilityId: 'facility-red-cross'
+  facilityId: CommandMedicalFacilityId
   routeProgress: number
 }
 
 export interface CommandMedicalDragInteraction {
   enabled: boolean
-  selectedFacilityId: 'facility-shiyi' | 'facility-red-cross'
-  targetFacilityId: 'facility-red-cross'
+  selectedFacilityId: CommandMedicalFacilityId
+  targetFacilityId: CommandMedicalFacilityId
   onDrop: (drop: CommandMedicalRouteDrop) => void
 }
 

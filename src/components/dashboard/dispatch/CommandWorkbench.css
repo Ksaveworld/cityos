@@ -94,6 +94,58 @@
   isolation: isolate;
 }
 
+.legacy-advisor-toggle {
+  position: absolute;
+  z-index: 8;
+  right: 12px;
+  bottom: 12px;
+  display: inline-flex;
+  height: 34px;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgb(91 91 214 / 0.28);
+  border-radius: 9px;
+  padding: 0 11px;
+  background: rgb(255 255 255 / 0.96);
+  box-shadow: 0 6px 18px rgb(16 24 40 / 0.14);
+  color: #4d4dc2;
+  font-size: 10px;
+  font-weight: 700;
+  backdrop-filter: blur(8px);
+}
+
+.legacy-advisor-drawer {
+  position: absolute;
+  z-index: 9;
+  top: 12px;
+  right: 12px;
+  bottom: 12px;
+  width: min(390px, calc(100% - 24px));
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 12px;
+  box-shadow: 0 14px 38px rgb(16 24 40 / 0.2);
+}
+
+.legacy-advisor-drawer > section {
+  height: 100%;
+}
+
+.legacy-advisor-close {
+  position: absolute;
+  z-index: 2;
+  top: 10px;
+  right: 10px;
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid #e8eaf0;
+  border-radius: 8px;
+  background: #fff;
+  color: #6b7280;
+}
+
 .command-map-base,
 .command-map-wash,
 .command-route-overlay,

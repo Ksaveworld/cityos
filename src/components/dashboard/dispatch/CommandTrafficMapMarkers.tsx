@@ -73,6 +73,9 @@ export const CommandMedicalMapMarker = memo(function CommandMedicalMapMarker({
   const styleReady = useMapStyleReady(map)
 
   if (!map || !styleReady || !unit) return null
+  const targetLabel = interaction.targetFacilityId === 'facility-red-cross'
+    ? '红十字会医院'
+    : '市一医院'
 
   return (
     <DraggableUnitMarker
@@ -82,9 +85,9 @@ export const CommandMedicalMapMarker = memo(function CommandMedicalMapMarker({
       enabled={interaction.enabled}
       kind="medical"
       testId="draggable-medical-unit"
-      dragHint="拖到青色候选路线"
+      dragHint={`拖到${targetLabel}路线`}
       compactHint="预览 · 未下发"
-      keyboardInstruction="按住拖动到红十字会医院候选路线；键盘按回车可生成同一换院预览"
+      keyboardInstruction={`按住拖动到${targetLabel}路线；键盘按回车可生成同一换院预览`}
       onDrop={(routeProgress) => interaction.onDrop({
         facilityId: interaction.targetFacilityId,
         routeProgress,

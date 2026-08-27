@@ -7,6 +7,7 @@ import type {
   TrafficCommandState,
 } from './commandWorkbenchModel'
 import { CommandMapInteractionProvider } from './CommandMapInteractionProvider'
+import type { CommandMedicalRouteDrop } from './CommandMapInteractionContext'
 
 interface CommandTacticalMapProps {
   scenario: CommandScenarioId
@@ -46,7 +47,7 @@ export const CommandTacticalMap = memo(function CommandTacticalMap({
           enabled: medical.phase === 'blocked' && medical.selectedFacilityId === 'facility-shiyi',
           selectedFacilityId: medical.selectedFacilityId,
           targetFacilityId: 'facility-red-cross' as const,
-          onDrop: ({ routeProgress }: { facilityId: 'facility-red-cross'; routeProgress: number }) => onMedicalDrop(routeProgress),
+          onDrop: ({ routeProgress }: CommandMedicalRouteDrop) => onMedicalDrop(routeProgress),
         }
       : null,
   }), [medical.phase, medical.selectedFacilityId, onMedicalDrop, onTrafficDrop, scenario, traffic.activeRouteId, traffic.phase])

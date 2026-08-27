@@ -23,6 +23,8 @@ import { ResourceDispatchPanel } from '@/components/dashboard/dispatch/ResourceD
 import { ResourceDispatchWorkspace } from '@/components/dashboard/dispatch/ResourceDispatchWorkspace'
 import { CommandWorkbench } from '@/components/dashboard/dispatch/CommandWorkbench'
 import type { CommandScenarioId } from '@/components/dashboard/dispatch/commandWorkbenchModel'
+import { LegacyDispatchWorkbench } from '@/components/dashboard/dispatch/LegacyDispatchWorkbench'
+import type { CommandMedicalFacilityId } from '@/components/dashboard/dispatch/CommandMapInteractionContext'
 import {
   ActiveEventDispatchContext,
   type ActiveDispatchEvent,
@@ -109,6 +111,9 @@ const COMMAND_WORKBENCH_EVENT_IDS = new Set([
   'ev-medical-panfu',
   'ev-city-order-beijing',
 ])
+const LEGACY_ROUTINE_HOSPITAL_TRANSFERS = ['facility-shiyi', 'facility-red-cross']
+  .map((facilityId) => createRoutineHospitalTransfer(DISPATCH_FACILITIES.find((facility) => facility.id === facilityId)))
+  .filter((transfer): transfer is NonNullable<typeof transfer> => Boolean(transfer))
 
 function usesCommandWorkbench(event: ActiveDispatchEvent | null): event is ActiveDispatchEvent {
   return Boolean(event?.kind === 'daily' && COMMAND_WORKBENCH_EVENT_IDS.has(event.id))
@@ -1238,7 +1243,13 @@ function LegacyApp() {
     return null
   })()
   const commandWorkbenchEvent = usesCommandWorkbench(activeDispatchEvent) ? activeDispatchEvent : null
-  const legacyDispatchEvent = activeDispatchEvent && !commandWorkbenchEvent ? activeDispatchEvent : null
+  const legacyMapDispatchEvent = activeDispatchEvent?.kind === 'daily' && activeDispatchEvent.id === 'ev-fire-finance'
+    ? activeDispatchEvent
+    : null
+  const legacyDispatchEvent = activeDispatchEvent && !commandWorkbenchEvent && !legacyMapDispatchEvent ? activeDispatchEvent : null
+  const legacySelectedFacilityId = (resolveRoutineHospitalFacilityId(dispatchResolutionOptionId) ?? 'facility-shiyi') as CommandMedicalFacilityId
+  const legacyHospitalTransfers = LEGACY_ROUTINE_HOSPITAL_TRANSFERS
+  const legacyHospitalTransfer = legacyHospitalTransfers.find((transfer) => transfer.id === legacySelectedFacilityId) ?? null
   const selectedDispatchCase = getDispatchCase(selectedDispatchEventId)
   const selectedDispatchAssignment = selectedDispatchEventId ? dispatchAssignments[selectedDispatchEventId] : null
   const selectedDispatchOperation = selectedDispatchEventId ? dispatchOperations[selectedDispatchEventId] : null
@@ -1382,6 +1393,73 @@ function LegacyApp() {
                   routineHospitalTransfer={null}
                   onScenarioPointSelect={(point) => commandMap.onScenarioPointSelect(point.label)}
                   showRoadNetworkContext
+                />
+              )}
+            />
+          ) : legacyMapDispatchEvent ? (
+            <LegacyDispatchWorkbench
+              event={legacyMapDispatchEvent}
+              selectedFacilityId={legacySelectedFacilityId}
+              advisorRequestId={dispatchPromptRequest?.id}
+              onSelectFacility={(facilityId) => setDispatchResolutionOptionId(
+                facilityId === 'facility-red-cross' ? 'hospital-red-cross' : 'hospital-shiyi',
+              )}
+              renderMap={(executionFrame) => (
+                <CityMap
+                  site={scenario.site}
+                  roads={routing.roads}
+                  plans={plans}
+                  routeWayIds={routeWayIds}
+                  medicalRoute={null}
+                  activePlanId={mapActivePlanId}
+                  animate
+                  taskRoutesVisible
+                  routePulseAllowed
+                  pulseActivePlanOnly={false}
+                  executionFrame={executionFrame}
+                  showStrategyMarkers={false}
+                  focusActiveRoute={false}
+                  scenarioFocusRevision={scenarioFocusRevision}
+                  closedWays={[]}
+                  routeStale={false}
+                  onCloseWay={() => undefined}
+                  onRemoveClosedWay={() => undefined}
+                  layers={commandMapLayers}
+                  resourceReferenceVisible={false}
+                  onResourceReferenceVisibleChange={() => undefined}
+                  showResourceReferenceControl={false}
+                  showSimulationProvenance={false}
+                  scenarioVariant="routine"
+                  routineHospitalTransfer={legacyHospitalTransfer}
+                  routineHospitalCandidates={legacyHospitalTransfers}
+                  showRoadNetworkContext
+                />
+              )}
+              contextPanel={(
+                <ActiveEventDispatchContext
+                  event={legacyMapDispatchEvent}
+                  onAsk={(text) => setDispatchPromptRequest({ id: crypto.randomUUID(), text })}
+                  onApplyResolution={applyDispatchResolution}
+                  selectedOptionId={dispatchResolutionOptionId}
+                  onSelectOption={setDispatchResolutionOptionId}
+                />
+              )}
+              advisorPanel={(
+                <ResourceDispatchWorkspace
+                  selectedCase={selectedDispatchCase}
+                  selectedAssignment={selectedDispatchAssignment}
+                  selectedOperation={selectedDispatchOperation}
+                  selectedSession={selectedDispatchSession}
+                  assignments={dispatchAssignments}
+                  operations={dispatchOperations}
+                  sessions={workflowSessions}
+                  entryNotice={dispatchEntryNotice}
+                  workflowEvent={legacyMapDispatchEvent}
+                  selectedResolutionOptionId={dispatchResolutionOptionId}
+                  promptRequest={dispatchPromptRequest}
+                  onOpen={openDispatchEvent}
+                  onSelectResolution={setDispatchResolutionOptionId}
+                  onApplyResolution={applyDispatchResolution}
                 />
               )}
             />
