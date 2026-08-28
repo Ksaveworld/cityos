@@ -2062,7 +2062,7 @@ export const CityMap = memo(function CityMap({
           poi: 'hospital',
           dispatchFacilityId: transfer.id,
           labelOffset: [12, -14],
-          labelNudge: transfer.planningState === 'impacted' ? [0, 45] : undefined,
+          labelNudge: transfer.planningState === 'impacted' ? [88, -38] : undefined,
         }))
     const scenarioBasePoints = routineTransfers.length > 0
       ? scenarioConfig.points.filter((point) => point.label !== '医疗参考')
