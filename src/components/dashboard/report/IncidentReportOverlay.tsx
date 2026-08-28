@@ -232,7 +232,6 @@ export default function IncidentReportOverlay({
   const contactSummary = [...new Set(departments.map((item) => item.contact))].join('；') || '系统任务包'
   const reportDelivered = approved && session.deliveryStatus !== 'draft' && session.deliveryStatus !== 'pending-send'
   const reportDecisionNote = currentPlan ? session.decisionNote : ''
-  const fastestPlan = fixture.plans.reduce((fastest, plan) => plan.etaMinutes < fastest.etaMinutes ? plan : fastest, selectedPlan)
   const reportNumber = `${fixture.scenarioId}-${view === 'plan' ? `PLAN-${selectedPlan.id}` : REPORT_KIND_CODE[view]}-v${session.planVersion}-${reportSerial(generatedAt)}`
   const versionUpdatedAt = session.versionUpdatedAt || generatedAt
   const currentExecutionLabel = `方案 ${selectedPlan.label}（${approved ? '已批准' : '待批准'}）`
@@ -376,7 +375,7 @@ export default function IncidentReportOverlay({
         <div className="report-alert">
           <div className="report-alert-icon"><ShieldAlert size={18} /></div>
           <div>
-            <strong>{view === 'brief' ? '当前态势与证据缺口' : view === 'plan' ? '当前候选方案结果' : isCommandTask ? '当前指挥任务包' : isOwnerTask ? '当前负责人任务包' : '事件执行与办结结果'}</strong>
+            <strong>{view === 'brief' ? '当前态势与证据缺口' : view === 'plan' ? currentPlan ? '当前方案结果' : '方案详情预览' : isCommandTask ? '当前指挥任务包' : isOwnerTask ? '当前负责人任务包' : '事件执行与办结结果'}</strong>
             <p>{view === 'brief' ? situationSummary : view === 'plan' ? `${selectedPlan.summary}${isEditing ? '下方修改只在本地草案中预览，应用后才生成新版本并使原批准失效。' : currentPlan ? `当前数值来自本次会话 v${session.planVersion} 重算，不沿用候选模板旧值。` : '当前数值为该候选的初始估算，未按本次会话重算。'}` : isCommandTask ? `以已批准方案为执行依据，汇总事件事实、人员资源、路线时限、部门任务和回传要求。` : isOwnerTask ? `${departments.length} 项负责人任务由人工批准版本生成；批准状态与下发状态分别记录。` : `本报告记录方案 ${selectedPlan.label} 点击执行后的任务状态、实际投入、回传结果与办结状态，不再复用候选方案内容。`}</p>
           </div>
           {view === 'brief' ? (
@@ -548,28 +547,21 @@ export default function IncidentReportOverlay({
         )}
 
         {view === 'plan' && <>
-          <Section number="3" title="候选方案对比">
-            <p className="report-owner">候选初始估算只用于横向比较；当前选择采用本次会话 v{session.planVersion} 的重算值，最终仍由人工决定。</p>
-            <div className="report-plan-grid">
-              {fixture.plans.map((plan) => {
-                const planIsCurrent = plan.id === session.selectedPlanId
-                const planEta = planIsCurrent ? session.etaMinutes : plan.etaMinutes
-                const planRisk = planIsCurrent ? session.coverageRisk : plan.coverageRisk
-                return (
-                  <article key={plan.id} className={plan.id === selectedPlan.id ? 'is-selected' : ''}>
-                    <div className="report-plan-head"><span>方案 {plan.label}</span><span>{plan.id === fastestPlan.id && <MetaBadge tone="blue">初始时效优先</MetaBadge>}{plan.id === selectedPlan.id && <span style={{ marginLeft: 5 }}><MetaBadge tone={currentPlan ? 'green' : 'blue'}>{currentPlan ? '当前选择' : '本报告候选'}</MetaBadge></span>}</span></div>
-                    <h3>{plan.title}</h3><p>{plan.summary}</p>
-                    <dl>
-                      <div><dt>方案目标</dt><dd>{plan.summary}</dd></div>
-                      <div><dt>生成依据</dt><dd>{triggerBasis}</dd></div>
-                      <div><dt>计算条件</dt><dd>{keyAssumptions}</dd></div>
-                      <div><dt>行动顺序</dt><dd>{plan.actions.join(' → ')}</dd></div>
-                      <div><dt>何时重算</dt><dd>待核实项变化后重算，并重新人工批准。</dd></div>
-                      <div><dt>{planIsCurrent ? `v${session.planVersion} 当前重算` : '候选初始估算'}</dt><dd>{planEta.toFixed(1)} 分钟；覆盖风险 {planRisk}</dd></div>
-                    </dl>
-                  </article>
-                )
-              })}
+          <Section number="3" title="方案详情">
+            <p className="report-owner">本报告只呈现方案 {selectedPlan.label}；{currentPlan ? `数值采用本次会话 v${session.planVersion} 的当前重算结果。` : '数值为该候选的初始预览，选择后再按本次会话重算。'}最终仍由人工决定。</p>
+            <div className="report-plan-grid report-plan-grid-single">
+              <article className="is-selected">
+                <div className="report-plan-head"><span>方案 {selectedPlan.label}</span><MetaBadge tone={currentPlan ? 'green' : 'blue'}>{currentPlan ? '当前选择' : '本报告候选'}</MetaBadge></div>
+                <h3>{selectedPlan.title}</h3><p>{selectedPlan.summary}</p>
+                <dl>
+                  <div><dt>方案目标</dt><dd>{selectedPlan.summary}</dd></div>
+                  <div><dt>生成依据</dt><dd>{triggerBasis}</dd></div>
+                  <div><dt>计算条件</dt><dd>{keyAssumptions}</dd></div>
+                  <div><dt>行动顺序</dt><dd>{selectedPlan.actions.join(' → ')}</dd></div>
+                  <div><dt>何时重算</dt><dd>待核实项变化后重算，并重新人工批准。</dd></div>
+                  <div><dt>{currentPlan ? `v${session.planVersion} 当前重算` : '候选初始预览'}</dt><dd>{reportEta.toFixed(1)} 分钟；覆盖风险 {reportRisk}</dd></div>
+                </dl>
+              </article>
             </div>
           </Section>
 

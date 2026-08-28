@@ -106,6 +106,7 @@ export function ActiveEventDispatchContext({
   const delivery = DELIVERY_META[event.session.deliveryStatus]
   const dispatchException = resolveDispatchException(event, assignments)
   const selectedPlan = event.fixture.plans.find((plan) => plan.id === event.session.selectedPlanId) ?? event.fixture.plans[0]
+  const currentVersionApproved = event.session.approvedVersion === event.session.planVersion
   const selectedResolution = dispatchException?.options.find((option) => option.optionId === selectedOptionId) ?? null
   const exceptionAssignment = dispatchException
     ? assignments.find((assignment) => assignment.department === dispatchException.department && assignment.task === dispatchException.task) ?? null
@@ -138,7 +139,7 @@ export function ActiveEventDispatchContext({
             <ContextMetric label="当前方案" value={`方案 ${selectedPlan.label}`} detail={selectedPlan.title} />
             <ContextMetric label="预计到场" value={`${event.session.etaMinutes.toFixed(1)} 分钟`} detail="页面模型估算" />
             <ContextMetric label="协同任务" value={`${assignments.length} 个`} detail="按部门任务包汇总" />
-            <ContextMetric label="批准版本" value={`v${event.session.planVersion}`} detail="人工确认版本" />
+            <ContextMetric label="批准版本" value={currentVersionApproved ? `v${event.session.planVersion}` : '无有效批准'} detail={currentVersionApproved ? '批准已绑定当前版本' : '当前版本待人工批准'} />
           </div>
         </section>
 
@@ -183,6 +184,22 @@ export function ActiveEventDispatchContext({
           <section className="rounded-xl border border-line bg-white p-3 text-[9px] leading-relaxed text-ink-2">
             当前未发现需要改派的异常。可在对话中询问任务差异、资源状态与后续回传要求。
           </section>
+        )}
+
+        {event.id === 'ev-fire-finance' && (
+          <>
+            <DispatchSyncSnapshot
+              event={event}
+              assignment={exceptionAssignment}
+              resolution={selectedResolution}
+              hasException={dispatchException !== null}
+            />
+            <DispatchVersionSummary
+              session={event.session}
+              delivery={delivery}
+              hasPendingResolution={selectedResolution !== null}
+            />
+          </>
         )}
 
         <section>
@@ -230,6 +247,74 @@ export function ActiveEventDispatchContext({
 
 function ContextMetric({ label, value, detail }: { label: string; value: string; detail: string }) {
   return <div className="min-w-0 rounded-lg bg-sunken px-2 py-2"><div className="text-[8px] text-ink-3">{label}</div><div className="mt-0.5 truncate text-[10px] font-semibold text-ink-1">{value}</div><div className="mt-0.5 truncate text-[8px] text-ink-3">{detail}</div></div>
+}
+
+function DispatchSyncSnapshot({
+  event,
+  assignment,
+  resolution,
+  hasException,
+}: {
+  event: ActiveDispatchEvent
+  assignment: TaskAssignment | null
+  resolution: TaskDispatchOverride | null
+  hasException: boolean
+}) {
+  const nextVersion = event.session.planVersion + 1
+  const mapValue = resolution ? '候选已高亮' : hasException ? '等待选择' : '当前方案'
+  const mapDetail = resolution?.optionLabel ?? (hasException ? '原任务继续保留显示' : '地图与当前任务一致')
+  const taskValue = resolution ? `预览 v${nextVersion}` : `当前 v${event.session.planVersion}`
+  const taskDetail = resolution ? '确认前不会生成新版本' : hasException ? '尚未生成调整草案' : '无待确认调整'
+  const unitValue = resolution?.vehicles ?? assignment?.vehicles ?? '按当前任务包'
+  const ownerValue = resolution?.owner ?? assignment?.owner ?? event.fixture.defaultOwner
+
+  return (
+    <section aria-label="同步重算方案快照" aria-live="polite" className="rounded-xl border border-[#D8E5FA] bg-white p-3 shadow-sm">
+      <div className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold text-ink-1"><Clock3 size={12} className="text-[#2768CA]" /><span>同步重算</span><span className="ml-auto text-[8px] font-normal text-ink-3">方案快照</span></div>
+      <div className="grid grid-cols-2 gap-2">
+        <ContextMetric label="地图状态" value={mapValue} detail={mapDetail} />
+        <ContextMetric label="任务草案" value={taskValue} detail={taskDetail} />
+        <ContextMetric label="执行单元" value={unitValue} detail={resolution ? '随当前候选同步预览' : '沿用当前任务包'} />
+        <ContextMetric label="人工责任" value={ownerValue} detail="确认与下发仍由人工完成" />
+      </div>
+    </section>
+  )
+}
+
+function DispatchVersionSummary({
+  session,
+  delivery,
+  hasPendingResolution,
+}: {
+  session: WorkflowSession
+  delivery: (typeof DELIVERY_META)[WorkflowSession['deliveryStatus']]
+  hasPendingResolution: boolean
+}) {
+  const currentApproved = session.approvedVersion === session.planVersion
+  return (
+    <section aria-label="版本与任务" className="rounded-xl border border-line bg-white p-3 shadow-sm">
+      <div className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold text-ink-1"><History size={12} className="text-accent-strong" /><span>版本与任务</span><span className="ml-auto text-[8px] font-normal text-ink-3">可回溯</span></div>
+      <div className="space-y-1.5">
+        <article className="grid grid-cols-[34px_minmax(0,1fr)_auto] items-center gap-2 rounded-lg border border-[#D9D9F8] bg-[#FAFAFF] p-2">
+          <span className="grid h-7 place-items-center rounded-md bg-accent-weak font-mono text-[9px] font-semibold text-accent-strong">v{session.planVersion}</span>
+          <div className="min-w-0"><strong className="block text-[9px] text-ink-1">当前方案版本</strong><small className="mt-0.5 block truncate text-[8px] text-ink-3">{currentApproved ? '批准已绑定本版本' : '当前版本没有有效批准'}</small></div>
+          <b className={`rounded px-1.5 py-0.5 text-[8px] ${currentApproved ? 'bg-[#E8F7EF] text-[#237A52]' : 'bg-[#FFF5DE] text-[#946114]'}`}>{currentApproved ? '已批准' : '待批准'}</b>
+        </article>
+        {hasPendingResolution && (
+          <article className="grid grid-cols-[34px_minmax(0,1fr)_auto] items-center gap-2 rounded-lg border border-dashed border-[#E7C36F] bg-[#FFFCF5] p-2">
+            <span className="grid h-7 place-items-center rounded-md bg-[#FFF5DE] font-mono text-[9px] font-semibold text-[#946114]">v{session.planVersion + 1}</span>
+            <div className="min-w-0"><strong className="block text-[9px] text-ink-1">调整版本预览</strong><small className="mt-0.5 block truncate text-[8px] text-ink-3">尚未生成；人工确认后才写入版本历史</small></div>
+            <b className="rounded bg-[#FFF5DE] px-1.5 py-0.5 text-[8px] text-[#946114]">待确认</b>
+          </article>
+        )}
+        <article className="grid grid-cols-[34px_minmax(0,1fr)_auto] items-center gap-2 rounded-lg border border-line bg-white p-2">
+          <span className="grid h-7 place-items-center rounded-md bg-sunken text-ink-2"><FileText size={11} /></span>
+          <div className="min-w-0"><strong className="block text-[9px] text-ink-1">当前任务包 · v{session.planVersion}</strong><small className="mt-0.5 block truncate text-[8px] text-ink-3">{delivery.detail}{hasPendingResolution ? '；确认前保持原状态' : ''}</small></div>
+          <b className={`rounded px-1.5 py-0.5 text-[8px] font-semibold ${delivery.tone}`}>{delivery.label}</b>
+        </article>
+      </div>
+    </section>
+  )
 }
 
 function applyPendingResolution(assignment: TaskAssignment, resolution: TaskDispatchOverride): TaskAssignment {
