@@ -11,6 +11,8 @@ export interface PoiMarkerDatum {
   kind: PoiKind
   label: string
   meta?: string
+  /** 视觉标签需要收短时，保留给 title 与无障碍名称的完整状态说明。 */
+  accessibleMeta?: string
   confidence?: PoiConfidence
   /** 告警起伏光效，用于需要引起注意的事件锚点 */
   alarm?: boolean
@@ -262,7 +264,9 @@ function PoiBadge({ point }: { point: PoiMarkerDatum }) {
   const spec = POI_SPECS[point.kind]
   const unverified = point.confidence === 'unverified'
   const facility = point.role === 'facility'
+  const impactedHospital = facility && point.kind === 'hospital' && point.planningState === 'impacted'
   const interactive = Boolean(point.onSelect)
+  const accessibleMeta = point.accessibleMeta ?? point.meta
   const visibleLabel = point.role === 'facility'
     ? point.label
     : point.label.replace(/（(?:模拟|演示)）$/u, '')
@@ -281,6 +285,7 @@ function PoiBadge({ point }: { point: PoiMarkerDatum }) {
       data-role={facility ? 'facility' : 'incident'}
       data-planning-state={point.planningState ?? 'none'}
       data-selected={point.selected ? 'true' : 'false'}
+      data-alert={impactedHospital ? 'receiving-capacity' : 'none'}
     >
       {point.selected && point.detail && (
         <div className="cityos-poi-detail" role="dialog" aria-label={`${point.detail.title}资源详情`}>
@@ -317,7 +322,13 @@ function PoiBadge({ point }: { point: PoiMarkerDatum }) {
           )}
         </div>
       )}
-      {point.alarm && <span className="cityos-poi-pulse" style={{ background: spec.color }} aria-hidden="true" />}
+      {(point.alarm || impactedHospital) && (
+        <span
+          className={`cityos-poi-pulse${impactedHospital ? ' cityos-poi-pulse--alert' : ''}`}
+          style={impactedHospital ? undefined : { background: spec.color }}
+          aria-hidden="true"
+        />
+      )}
 
       <button
         type="button"
@@ -333,8 +344,8 @@ function PoiBadge({ point }: { point: PoiMarkerDatum }) {
           point.onSelect?.()
         }}
         disabled={!interactive}
-        title={`${point.label} · ${spec.category}${point.meta ? ` · ${point.meta}` : ''}${point.planningState ? ` · ${point.planningState === 'current' ? '当前分配' : point.planningState === 'candidate' ? '候选资源' : '受影响资源'}` : ''}${unverified ? ' · 待核实' : ''}`}
-        aria-label={`${point.label}，${spec.category}${point.meta ? `，${point.meta}` : ''}${point.planningState ? `，${point.planningState === 'current' ? '当前分配' : point.planningState === 'candidate' ? '候选资源' : '受影响资源'}` : ''}${unverified ? '，待核实' : ''}`}
+        title={`${point.label} · ${spec.category}${accessibleMeta ? ` · ${accessibleMeta}` : ''}${point.planningState ? ` · ${point.planningState === 'current' ? '当前分配' : point.planningState === 'candidate' ? '候选资源' : '受影响资源'}` : ''}${unverified ? ' · 待核实' : ''}`}
+        aria-label={`${point.label}，${spec.category}${accessibleMeta ? `，${accessibleMeta}` : ''}${point.planningState ? `，${point.planningState === 'current' ? '当前分配' : point.planningState === 'candidate' ? '候选资源' : '受影响资源'}` : ''}${unverified ? '，待核实' : ''}`}
       >
         <span
           className="cityos-poi-glyph"

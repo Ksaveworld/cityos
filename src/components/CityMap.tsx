@@ -46,8 +46,9 @@ import type { MapLayerVisibility } from '@/components/dashboard/mapLayers'
 import type { RoutineHospitalTransfer } from '@/components/dashboard/dispatch/hospitalStrategyRoutes'
 import {
   DISPATCH_FACILITIES,
-  dispatchFacilityEtaLabel,
+  dispatchFacilityMapStatusLabel,
   dispatchFacilityPlanningState,
+  dispatchFacilityStatusDetailsLabel,
   getDispatchFacility,
   isDispatchSelectableFacilityId,
   type DispatchFacilityId,
@@ -2061,6 +2062,7 @@ export const CityMap = memo(function CityMap({
           poi: 'hospital',
           dispatchFacilityId: transfer.id,
           labelOffset: [12, -14],
+          labelNudge: transfer.planningState === 'impacted' ? [0, 45] : undefined,
         }))
     const scenarioBasePoints = routineTransfers.length > 0
       ? scenarioConfig.points.filter((point) => point.label !== '医疗参考')
@@ -2092,10 +2094,11 @@ export const CityMap = memo(function CityMap({
         kind,
         label: point.label,
         meta: facility
-          ? `${facility.receivingState} · ${dispatchFacilityEtaLabel(facility)}`
+          ? dispatchFacilityMapStatusLabel(facility)
           : linkedOption
             ? `${linkedOption.resourceState} · 约 ${linkedOption.etaMinutes.toFixed(1)} 分钟（演示估算）`
             : undefined,
+        accessibleMeta: facility ? dispatchFacilityStatusDetailsLabel(facility) : undefined,
         confidence: facility?.id === 'facility-medical-reference'
           ? 'unverified'
           : linkedOption

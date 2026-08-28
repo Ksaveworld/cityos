@@ -28,6 +28,7 @@ export interface DispatchFacility {
   name: string
   position: [number, number]
   receivingState: string
+  mapStatusLabel?: string
   receivingStatePriority: number
   planningState: Readonly<Record<DispatchPlanningState, boolean>>
   selectable: boolean
@@ -105,6 +106,7 @@ export const DISPATCH_FACILITIES: DispatchFacility[] = [
     name: '原接收医院（模拟）',
     position: [113.25575, 23.11425],
     receivingState: '承接能力不足（模拟，待核实）',
+    mapStatusLabel: '异常：承接能力不足',
     receivingStatePriority: 1,
     planningState: { current: true, impacted: true, candidate: false },
     selectable: false,
@@ -218,6 +220,14 @@ export function resolveDispatchFacilityByOptionId(optionId: string) {
 
 export function dispatchFacilityEtaLabel(facility: DispatchFacility) {
   return facility.etaMinutes === null ? 'ETA 待核实' : `ETA 约 ${facility.etaMinutes} 分钟（演示估算）`
+}
+
+export function dispatchFacilityStatusDetailsLabel(facility: DispatchFacility) {
+  return `${facility.receivingState} · ${dispatchFacilityEtaLabel(facility)}`
+}
+
+export function dispatchFacilityMapStatusLabel(facility: DispatchFacility) {
+  return facility.mapStatusLabel ?? dispatchFacilityStatusDetailsLabel(facility)
 }
 
 export function dispatchFacilityPlanningState(facility: DispatchFacility): DispatchPlanningState {

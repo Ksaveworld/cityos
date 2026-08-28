@@ -370,6 +370,7 @@
    否则整个标识会被标签顶高，徽标就偏离实际位置了。 */
 .cityos-poi {
   position: relative;
+  isolation: isolate;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -507,10 +508,27 @@
   color: #6B7A90;
   border: 1px dashed #C3CEDD;
 }
+.cityos-poi[data-alert='receiving-capacity'] .cityos-poi-label[data-confidence='unverified'] {
+  border-color: transparent;
+}
+.cityos-poi[data-alert='receiving-capacity'] .cityos-poi-label small {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 1px;
+  padding: 1px 5px;
+  border: 1px solid var(--status-fire);
+  border-radius: 4px;
+  background: #FFF8F8;
+  color: var(--status-fire);
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 1.2;
+}
 
 /* 告警起伏：事件锚点用扩散环提示，reduced-motion 下由全局规则退化为静止 */
 .cityos-poi-pulse {
   position: absolute;
+  z-index: -1;
   top: 3px;
   width: 24px;
   height: 24px;
@@ -518,6 +536,9 @@
   opacity: 0.5;
   animation: cityos-poi-alarm 1.8s ease-out infinite;
   pointer-events: none;
+}
+.cityos-poi-pulse--alert {
+  background: var(--status-fire);
 }
 @keyframes cityos-poi-alarm {
   0% { transform: scale(1); opacity: 0.5; }
