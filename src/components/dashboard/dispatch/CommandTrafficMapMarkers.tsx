@@ -82,6 +82,11 @@ export const CommandTrafficMapMarkers = memo(function CommandTrafficMapMarkers({
         <TrafficUnitMarker
           map={map}
           unit={unit}
+          labelSide={routes.find((route) => route.active)?.routeId === 'A'
+            ? 'right'
+            : routes.find((route) => route.active)?.routeId === 'C'
+              ? 'left'
+              : 'bottom'}
           targetRoutes={routes.filter((route) => (
             isTrafficSelectableRouteId(route.routeId) && interaction.targetRouteIds.includes(route.routeId)
           ))}
@@ -228,7 +233,7 @@ function TrafficRouteOriginMarker({
   const [lng, lat] = position
 
   useEffect(() => {
-    const marker = new Marker({ element, anchor: 'bottom', offset: [0, -2] })
+    const marker = new Marker({ element, anchor: 'bottom', offset: [0, -7] })
       .setLngLat([lng, lat])
       .addTo(map)
     return () => {
@@ -246,7 +251,6 @@ function TrafficRouteOriginMarker({
     >
       <span aria-hidden="true">起</span>
       <strong>调度起点</strong>
-      <small>模拟</small>
     </div>,
     element,
   )
@@ -255,11 +259,13 @@ function TrafficRouteOriginMarker({
 function TrafficUnitMarker({
   map,
   unit,
+  labelSide,
   targetRoutes,
   interaction,
 }: {
   map: MapLibreMap
   unit: CommandTrafficUnitMarkerDatum
+  labelSide: 'left' | 'right' | 'bottom'
   targetRoutes: CommandTrafficRouteAnnotation[]
   interaction: CommandTrafficDragInteraction
 }) {
@@ -273,6 +279,7 @@ function TrafficUnitMarker({
       testId="draggable-traffic-unit"
       dragHint="拖到另一条候选路线"
       compactHint={interaction.markerStatusLabel}
+      labelSide={labelSide}
       keyboardInstruction="按住拖动到候选路线 A 或 C；键盘按回车可切换到另一条候选路线"
       disabledInstruction={interaction.markerStatusLabel}
       onDrop={(routeId, routeProgress) => {
@@ -295,6 +302,7 @@ function DraggableUnitMarker({
   compactHint,
   keyboardInstruction,
   disabledInstruction,
+  labelSide = 'right',
   onDrop,
 }: {
   map: MapLibreMap
@@ -307,6 +315,7 @@ function DraggableUnitMarker({
   compactHint: string
   keyboardInstruction: string
   disabledInstruction?: string
+  labelSide?: 'left' | 'right' | 'bottom'
   onDrop: (targetId: string, routeProgress: number) => void
 }) {
   const element = useMemo(() => {
@@ -408,6 +417,7 @@ function DraggableUnitMarker({
       className="command-traffic-unit"
       data-testid={testId}
       data-kind={kind}
+      data-label-side={labelSide}
       data-status={unit.status}
       role="button"
       tabIndex={enabled ? 0 : -1}

@@ -119,6 +119,8 @@ export const TRAFFIC_STRATEGY_ROUTES: readonly TrafficStrategyRoute[] = [
     recommendationReason: '原演示 ETA 最短，但受阻状态未解除，不建议继续执行；需人工核实阻塞范围与恢复时间。',
     displayLabel: '路线 B · 当前受阻 · 原 ETA 8 分钟',
     color: [229, 72, 77, 215],
+    // 受阻点与当前路线位置接近，标签上移后仍绑定原路线，同时为受阻点留出首屏净空。
+    labelOffset: [0, -58],
     dataOrigin: { ...COMMON_DATA_ORIGIN },
   },
   {

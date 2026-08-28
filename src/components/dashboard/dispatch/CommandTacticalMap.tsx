@@ -116,11 +116,6 @@ export const CommandTacticalMap = memo(function CommandTacticalMap({
           </div>
         )}
 
-        <div className="command-map-provenance">
-          <span className="command-shape command-shape-solid" aria-hidden="true" />已确认事件
-          <span className="command-shape command-shape-dashed" aria-hidden="true" />待核实证据
-        </div>
-
         {advisor}
       </div>
     </section>
@@ -149,7 +144,19 @@ function TrafficDragGuide({ traffic }: { traffic: TrafficCommandState }) {
   const editable = ['blocked', 'recalculating', 'awaiting-approval'].includes(traffic.phase)
   const route = routeChanged ? `路线 ${traffic.activeRouteId}` : null
   return (
-    <div className={`command-drag-guide ${routeChanged ? 'is-preview' : ''}`} aria-live="polite">
+    <div
+      className={`command-drag-guide ${routeChanged ? 'is-preview' : ''}`}
+      role="note"
+      tabIndex={0}
+      aria-label={`${routeChanged ? `${route} 已绑定地图预览` : '直接拖动车辆改线'}。${routeChanged
+        ? editable
+          ? '尚未人工确认；可继续点击或拖拽切换 A / C'
+          : '路线已随人工确认冻结'
+        : '按住清障车 02，拖到候选路线 A 或 C'}`}
+      aria-live="polite"
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}
+    >
       <span><Route size={15} /></span>
       <div>
         <strong>{routeChanged ? `${route} 已绑定地图预览` : '直接拖动车辆改线'}</strong>
@@ -192,7 +199,15 @@ function MedicalDragGuide({ medical }: { medical: MedicalCommandState }) {
               detail: `${dispatchFacilityEtaLabel(selectedFacility)}；候选已冻结，如需调整请重置演示`,
             }
   return (
-    <div className={`command-drag-guide is-medical ${selectedCandidate ? 'is-preview' : ''}`} aria-live="polite">
+    <div
+      className={`command-drag-guide is-medical ${selectedCandidate ? 'is-preview' : ''}`}
+      role="note"
+      tabIndex={0}
+      aria-label={`${guide.title}。${guide.detail}`}
+      aria-live="polite"
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}
+    >
       <span><Route size={15} /></span>
       <div>
         <strong>{guide.title}</strong>

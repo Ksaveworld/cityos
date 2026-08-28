@@ -32,6 +32,10 @@ export interface ScenarioMapPoint {
   dispatchFacilityId?: DispatchFacilityId
   /** 110 / 重大布防候选点与右栏 resolution option 共用的稳定 ID。 */
   dispatchOptionId?: string
+  /** 低优先级空间上下文只保留图标；完整名称仍通过 title / aria-label 可访问。 */
+  compact?: boolean
+  /** 仅在同一地图对象共址时微调标签，不改变点位坐标。 */
+  labelNudge?: [number, number]
   /** 仅作为路网求路经由点，不在地图上绘制 POI。 */
   hidden?: boolean
 }
@@ -237,10 +241,10 @@ export const SCENARIO_MAP_CONFIGS: Record<ScenarioMapVariant, ScenarioMapConfig>
         dispatchFacilityId: facility.id,
         labelOffset: index === 0 ? [12, 14] : index === 1 ? [12, 14] : [-12, -12],
       })),
-      { position: [113.2554, 23.1261], label: '工作人员输入', kind: 'source', color: AMBER, labelOffset: [-12, 14] },
-      { position: [113.2578, 23.1276], label: '演示事件流', kind: 'source', color: AMBER, labelOffset: [12, -12] },
-      { position: [113.2538, 23.1278], label: '北侧上游点位', kind: 'camera', color: VIOLET, labelOffset: [-12, -14] },
-      { position: [113.2592, 23.1286], label: '东侧上游点位', kind: 'camera', color: VIOLET, labelOffset: [12, -14] },
+      { position: [113.2554, 23.1261], label: '工作人员输入', kind: 'source', color: AMBER, labelOffset: [-12, 14], compact: true },
+      { position: [113.2578, 23.1276], label: '演示事件流', kind: 'source', color: AMBER, labelOffset: [12, -12], compact: true },
+      { position: [113.2538, 23.1278], label: '北侧上游点位', kind: 'camera', color: VIOLET, labelOffset: [-12, -14], compact: true },
+      { position: [113.2592, 23.1286], label: '东侧上游点位', kind: 'camera', color: VIOLET, labelOffset: [12, -14], compact: true },
     ],
     routes: [
       ...DISPATCH_FACILITIES.map((facility): ScenarioPointRouteRequest => ({
@@ -274,9 +278,9 @@ export const SCENARIO_MAP_CONFIGS: Record<ScenarioMapVariant, ScenarioMapConfig>
     points: [
       { position: [113.2684, 23.1253], label: '中山路清障作业点（模拟）', kind: 'event', color: RED, poi: 'crash', labelOffset: [14, -48] },
       { position: [113.2628, 23.1215], label: '清障车 02 当前位置（模拟）', kind: 'resource', color: BLUE, poi: 'vehicle', labelOffset: [-12, -10] },
-      { position: [113.2654242, 23.1217937], label: '万福路受阻点（模拟）', kind: 'event', color: RED, poi: 'road_closure', labelOffset: [12, 24] },
-      { position: [113.2644943, 23.121224], label: '阻塞前换道路口（模拟）', kind: 'entry', color: GREEN, poi: 'entry', labelOffset: [-12, 18] },
-      { position: [113.2669903, 23.1224768], label: '绕行汇回点（模拟）', kind: 'entry', color: GREEN, poi: 'entry', labelOffset: [12, 18] },
+      { position: [113.2654242, 23.1217937], label: '万福路受阻点（模拟）', kind: 'event', color: RED, poi: 'road_closure', labelOffset: [12, 24], labelNudge: [18, 0] },
+      { position: [113.2644943, 23.121224], label: '阻塞前换道路口（模拟）', kind: 'entry', color: GREEN, poi: 'entry', labelOffset: [-12, 18], hidden: true },
+      { position: [113.2669903, 23.1224768], label: '绕行汇回点（模拟）', kind: 'entry', color: GREEN, poi: 'entry', labelOffset: [12, 18], hidden: true },
       { position: [113.2661, 23.1254], label: '道路巡查', kind: 'source', color: AMBER, labelOffset: [-12, 14], hidden: true },
       { position: [113.2712, 23.1251], label: '市民上报', kind: 'source', color: AMBER, labelOffset: [12, -22], hidden: true },
       { position: [113.2655, 23.1275], label: '北侧上游点位', kind: 'camera', color: VIOLET, labelOffset: [-12, -14], hidden: true },
@@ -316,9 +320,9 @@ export const SCENARIO_MAP_CONFIGS: Record<ScenarioMapVariant, ScenarioMapConfig>
       { position: [113.2638, 23.1202], label: '市容巡查单元（模拟）', kind: 'resource', color: CITY_ORDER, poi: 'urban_order', labelOffset: [-12, -12] },
       { position: [113.2680, 23.1176], label: '消防协同单元（模拟）', kind: 'resource', color: RED, poi: 'fire_station', labelOffset: [12, 14] },
       { position: [113.26525, 23.11915], label: '消防通道入口（模拟待核实）', kind: 'source', color: RED, poi: 'road_closure', labelOffset: [14, 18] },
-      { position: [113.26495, 23.11965], label: '商户图片上报（模拟待核实）', kind: 'source', color: AMBER, poi: 'report', labelOffset: [-12, -16] },
-      { position: [113.26545, 23.11895], label: '巡查语音上报（模拟待核实）', kind: 'source', color: AMBER, poi: 'report', labelOffset: [12, 22] },
-      { position: [113.2647, 23.1200], label: '商圈视频点位（模拟待核实）', kind: 'camera', color: VIOLET, poi: 'camera', labelOffset: [-12, -14] },
+      { position: [113.26495, 23.11965], label: '商户图片上报（模拟待核实）', kind: 'source', color: AMBER, poi: 'report', labelOffset: [-12, -16], compact: true },
+      { position: [113.26545, 23.11895], label: '巡查语音上报（模拟待核实）', kind: 'source', color: AMBER, poi: 'report', labelOffset: [12, 22], compact: true },
+      { position: [113.2647, 23.1200], label: '商圈视频点位（模拟待核实）', kind: 'camera', color: VIOLET, poi: 'camera', labelOffset: [-12, -14], compact: true },
     ],
     signals: {
       anchorLabel: '北京路夜市占道点（演示）',

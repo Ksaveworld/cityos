@@ -332,6 +332,34 @@ button.command-route-preview:hover {
   color: #0b7f8a;
 }
 
+@media (max-width: 1240px) {
+  .command-drag-guide {
+    max-width: none;
+    padding: 4px;
+    pointer-events: auto;
+  }
+
+  .command-drag-guide > div {
+    display: none;
+  }
+
+  .command-drag-guide:hover,
+  .command-drag-guide:focus {
+    max-width: 280px;
+    padding: 7px 9px;
+  }
+
+  .command-drag-guide:hover > div,
+  .command-drag-guide:focus > div {
+    display: block;
+  }
+
+  .command-drag-guide:focus-visible {
+    outline: 2px solid rgb(91 91 214 / 0.55);
+    outline-offset: 2px;
+  }
+}
+
 .command-route-label-marker {
   pointer-events: none;
 }
@@ -408,7 +436,7 @@ button.command-route-preview:hover {
 .command-traffic-origin {
   display: grid;
   grid-template-columns: 23px auto;
-  min-width: 78px;
+  min-width: 70px;
   align-items: center;
   column-gap: 6px;
   border: 1px solid rgb(91 91 214 / 0.4);
@@ -422,7 +450,6 @@ button.command-route-preview:hover {
 }
 
 .command-traffic-origin > span {
-  grid-row: span 2;
   display: grid;
   width: 23px;
   height: 23px;
@@ -437,12 +464,6 @@ button.command-route-preview:hover {
 
 .command-traffic-origin strong {
   font-size: 9px;
-  line-height: 1.1;
-}
-
-.command-traffic-origin small {
-  color: #7a8598;
-  font-size: 8px;
   line-height: 1.1;
 }
 
@@ -539,12 +560,36 @@ button.command-route-preview:hover {
 .command-traffic-unit-label strong {
   color: #334155;
   font-size: 9px;
+  line-height: 1.1;
 }
 
 .command-traffic-unit-label small {
   margin-top: 1px;
   color: #8a5a14;
   font-size: 8px;
+  line-height: 1.1;
+}
+
+/* 单位身份必须常驻；左上已有操作引导，车辆旁只在交互时补充重复说明。 */
+.command-traffic-unit-marker[data-draggable='true'] .command-traffic-unit-label small {
+  display: none;
+}
+
+.command-traffic-unit-marker[data-draggable='true']:hover .command-traffic-unit-label small,
+.command-traffic-unit-marker[data-dragging='true'] .command-traffic-unit-label small,
+.command-traffic-unit:focus-visible .command-traffic-unit-label small {
+  display: block;
+}
+
+.command-traffic-unit[data-kind='traffic'][data-label-side='left'] .command-traffic-unit-label {
+  right: 35px;
+  left: auto;
+}
+
+.command-traffic-unit[data-kind='traffic'][data-label-side='bottom'] .command-traffic-unit-label {
+  top: 35px;
+  left: 50%;
+  transform: translateX(-50%);
 }
 
 .command-traffic-unit:focus-visible .command-traffic-unit-icon {
@@ -687,46 +732,6 @@ button.command-route-preview:hover {
 
 .command-vehicle-glyph {
   filter: drop-shadow(0 4px 10px rgb(20 35 58 / 0.18));
-}
-
-.command-map-provenance {
-  position: absolute;
-  z-index: 5;
-  right: 12px;
-  bottom: 12px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  border: 1px solid rgb(232 234 240 / 0.92);
-  border-radius: 9px;
-  padding: 7px 9px;
-  background: rgb(255 255 255 / 0.9);
-  color: #5f6b7c;
-  box-shadow: 0 4px 14px rgb(16 24 40 / 0.08);
-  font-size: 10px;
-  backdrop-filter: blur(8px);
-}
-
-.command-shape {
-  display: inline-block;
-  width: 9px;
-  height: 9px;
-  margin-left: 4px;
-}
-
-.command-shape:first-child {
-  margin-left: 0;
-}
-
-.command-shape-solid {
-  border-radius: 50%;
-  background: #5b5bd6;
-}
-
-.command-shape-dashed {
-  border: 1.5px dashed #c07816;
-  border-radius: 2px;
-  background: transparent;
 }
 
 .command-city-order-overlay,

@@ -19,6 +19,8 @@ export interface PoiMarkerDatum {
    * 一百多个点每个都挂标签，地图会被文字糊死，反而什么都读不出来。
    */
   compact?: boolean
+  /** 屏幕像素级标签微调；只移动文字卡，不移动实际 POI 徽标。 */
+  labelNudge?: [number, number]
   /**
    * 事件锚点还是常设设施。
    *
@@ -64,7 +66,8 @@ export interface SignalCalloutDatum {
  *   雪碧图，改个颜色就要重烘，且点击命中要另接 picking
  * - 点位数量是十几个量级，DOM 完全撑得住
  *
- * 代价是标签不做避让，密集时会叠——所以标签一律带白色药丸底，叠了也还能读。
+ * DOM Marker 不提供自动避让，因此决策必需对象保留短标签，证据与经由点使用 compact
+ * 形态；完整内容交给右栏或显式展开，避免把地图变成说明文字墙。
  */
 export const MapPoiMarkers = memo(function MapPoiMarkers({
   map,
@@ -161,7 +164,7 @@ function SignalCalloutMarker({ map, callout }: { map: MapLibreMap; callout: Sign
   const [lng, lat] = callout.position
 
   useEffect(() => {
-    const marker = new Marker({ element, anchor: 'bottom-left', offset: [0, -18] })
+    const marker = new Marker({ element, anchor: 'bottom-left', offset: [12, -52] })
       .setLngLat([lng, lat])
       .addTo(map)
     return () => {
@@ -173,42 +176,84 @@ function SignalCalloutMarker({ map, callout }: { map: MapLibreMap; callout: Sign
 }
 
 function SignalCallout({ callout }: { callout: SignalCalloutDatum }) {
-  const labelCenters = callout.labels.map((_, index) => 16 + index * 40)
+  const [expanded, setExpanded] = useState(false)
+  const panelId = `${callout.id}-details`
+  const visibleLabels = callout.labels.map((label) => label.replace(/（模拟待核实）$/u, ''))
+
+  useEffect(() => {
+    setExpanded(false)
+  }, [callout.id])
+
+  useEffect(() => {
+    if (!expanded) return undefined
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setExpanded(false)
+    }
+    window.addEventListener('keydown', handleEscape)
+    return () => {
+      window.removeEventListener('keydown', handleEscape)
+    }
+  }, [expanded])
 
   return (
     <div
-      className="pointer-events-none relative h-[128px] w-[306px]"
-      aria-label="事件线索"
+      className={`pointer-events-none relative ${expanded ? 'h-[146px] w-[204px]' : 'h-12 w-[142px]'}`}
+      aria-label={`现场输入 ${callout.labels.length} 条：${callout.labels.join('、')}`}
       data-signal-anchor-bound="true"
       data-signal-anchor-label={callout.anchorLabel}
+      data-signal-expanded={expanded ? 'true' : 'false'}
+      data-signal-summary-count={callout.labels.length}
     >
-      <svg className="absolute inset-0 size-full overflow-visible" viewBox="0 0 306 128" aria-hidden="true">
-        {labelCenters.map((centerY, index) => (
-          <path
-            key={callout.labels[index]}
-            data-signal-leader={callout.labels[index]}
-            d={`M 5 124 L 48 94 L 104 ${centerY} L 154 ${centerY}`}
-            fill="none"
-            stroke="#C77816"
-            strokeDasharray="3 3"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth="1.25"
-          />
-        ))}
-        <circle cx="5" cy="124" r="4" fill="#FFF7E6" stroke="#C77816" strokeWidth="1.5" />
+      <svg className="absolute bottom-0 left-0 h-12 w-14 overflow-visible" viewBox="0 0 56 48" aria-hidden="true">
+        <path
+          data-signal-leader="summary"
+          d="M 5 44 L 28 25 L 48 25"
+          fill="none"
+          stroke="#C77816"
+          strokeDasharray="3 3"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth="1.25"
+        />
+        <circle cx="5" cy="44" r="4" fill="#FFF7E6" stroke="#C77816" strokeWidth="1.5" />
       </svg>
-      <div className="absolute left-[154px] top-0 flex w-[152px] flex-col gap-2">
-        {callout.labels.map((label) => (
-          <div
-            key={label}
-            className="flex h-8 items-center gap-2 rounded-lg border border-dashed border-[#D8B66B] bg-white/95 px-2.5 text-[10px] font-semibold text-[#6D5420] shadow-sm backdrop-blur-sm"
-          >
-            <span className="size-2 shrink-0 rounded-full border border-dashed border-[#C77816] bg-[#FFF7E6]" aria-hidden="true" />
-            {label}
-          </div>
-        ))}
-      </div>
+      {expanded && (
+        <div
+          id={panelId}
+          role="region"
+          aria-label="现场输入详情"
+          className="pointer-events-auto absolute bottom-10 left-10 w-[164px] rounded-lg border border-[#E3D3AA] bg-white/97 p-2 shadow-[0_6px_18px_rgb(35_43_58_/_0.14)] backdrop-blur-sm"
+        >
+          <div className="mb-1.5 text-[9px] font-semibold text-[#7A5A1A]">现场输入</div>
+          <ul className="space-y-1">
+            {visibleLabels.map((label) => (
+              <li key={label} className="flex items-center gap-1.5 text-[9px] leading-tight text-[#4B5563]">
+                <span className="size-1.5 shrink-0 rounded-full border border-dashed border-[#C77816] bg-[#FFF7E6]" aria-hidden="true" />
+                {label}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <button
+        type="button"
+        className="pointer-events-auto absolute bottom-1 left-10 flex h-8 min-w-[102px] items-center gap-1.5 rounded-lg border border-dashed border-[#D8B66B] bg-white/96 px-2.5 text-[9px] font-semibold text-[#6D5420] shadow-sm backdrop-blur-sm hover:border-[#C77816] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#C77816]"
+        aria-expanded={expanded}
+        aria-controls={panelId}
+        onClick={(event) => {
+          event.stopPropagation()
+          setExpanded((current) => !current)
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== 'Escape') return
+          event.stopPropagation()
+          setExpanded(false)
+        }}
+      >
+        <span className="size-2 shrink-0 rounded-full border border-dashed border-[#C77816] bg-[#FFF7E6]" aria-hidden="true" />
+        <span>现场输入</span>
+        <strong className="font-mono text-[10px] tabular-nums text-[#9A6515]">{callout.labels.length}</strong>
+      </button>
     </div>
   )
 }
@@ -218,6 +263,9 @@ function PoiBadge({ point }: { point: PoiMarkerDatum }) {
   const unverified = point.confidence === 'unverified'
   const facility = point.role === 'facility'
   const interactive = Boolean(point.onSelect)
+  const visibleLabel = point.role === 'facility'
+    ? point.label
+    : point.label.replace(/（(?:模拟|演示)）$/u, '')
   // 白底 + 彩色描边这一种画法，同时服务两件事：常设设施，以及待核实的点位。
   // 两者语义不同但都属于「不是正在发生的事」，共用一种形态不会误读，
   // 而且省下一种视觉变量——地图上能同时并存的形态越少越读得快。
@@ -303,8 +351,14 @@ function PoiBadge({ point }: { point: PoiMarkerDatum }) {
           指不准位置反而比配色不统一更糟。 */}
       <span className="cityos-poi-tail" style={{ background: spec.color }} aria-hidden="true" />
       {!point.compact && (
-        <span className="cityos-poi-label" data-confidence={unverified ? 'unverified' : 'confirmed'}>
-          <strong>{point.label}</strong>
+        <span
+          className="cityos-poi-label"
+          data-confidence={unverified ? 'unverified' : 'confirmed'}
+          style={point.labelNudge
+            ? { transform: `translate(${point.labelNudge[0]}px, ${point.labelNudge[1]}px)` }
+            : undefined}
+        >
+          <strong>{visibleLabel}</strong>
           {point.meta && <small>{point.meta}</small>}
         </span>
       )}

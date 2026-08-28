@@ -671,7 +671,11 @@ export const CityMap = memo(function CityMap({
   const [selectedResourcePoiId, setSelectedResourcePoiId] = useState<string | null>(null)
   const [pitch, setPitch] = useState(0)
   const [basemapStatus, setBasemapStatus] = useState<'loading' | 'online' | 'fallback'>('loading')
+  const [expandedScenarioLegend, setExpandedScenarioLegend] = useState<ScenarioMapVariant | null>(null)
+  const [expandedBasemapNotice, setExpandedBasemapNotice] = useState<ScenarioMapVariant | null>(null)
   const scenarioConfig = scenarioVariant ? SCENARIO_MAP_CONFIGS[scenarioVariant] : null
+  const scenarioLegendExpanded = Boolean(scenarioVariant && expandedScenarioLegend === scenarioVariant)
+  const basemapNoticeExpanded = Boolean(scenarioVariant && expandedBasemapNotice === scenarioVariant)
   const previousScenarioVariant = useRef<ScenarioMapVariant | null>(scenarioVariant)
   useEffect(() => {
     if (scenarioVariant === 'routine' && previousScenarioVariant.current !== 'routine') {
@@ -2099,6 +2103,8 @@ export const CityMap = memo(function CityMap({
           : POI_CONFIDENCE_BY_SCENARIO_KIND[point.kind] ?? 'confirmed',
         alarm: point.kind === 'event',
         role: facility || linkedOption ? 'facility' : undefined,
+        compact: point.compact,
+        labelNudge: point.labelNudge,
         planningState: facility ? dispatchFacilityPlanningState(facility) : linkedOption ? 'candidate' : undefined,
         selected: facility
           ? commandMapInteraction.medical?.selectedFacilityId === facility.id
@@ -3129,26 +3135,58 @@ export const CityMap = memo(function CityMap({
       {layers.weather && <WeatherHud />}
 
       {basemapStatus === 'loading' && (
-        <div className="absolute left-1/2 top-3 -translate-x-1/2 rounded-lg border border-[#E8EAF0] bg-white/95 px-2.5 py-1.5 text-[10px] text-[#6B7280] shadow-sm">
-          正在加载在线底图 · 最长等待 8 秒
+        <div className={`absolute top-3 rounded-lg border border-[#E8EAF0] bg-white/95 px-2.5 py-1.5 text-[10px] text-[#6B7280] shadow-sm ${scenarioConfig ? 'right-3' : 'left-1/2 -translate-x-1/2'}`}>
+          {scenarioConfig ? '底图加载中' : '正在加载在线底图 · 最长等待 8 秒'}
         </div>
       )}
 
-      {basemapStatus === 'fallback' && (
-        <div className="absolute left-1/2 top-3 flex -translate-x-1/2 items-center gap-2 rounded-lg border border-[#E8EAF0] bg-white/95 px-2.5 py-1.5 text-[10px] text-[#6B7280] shadow-sm">
+      {basemapStatus === 'fallback' && scenarioConfig && !basemapNoticeExpanded ? (
+        <button
+          type="button"
+          className="absolute right-3 top-3 inline-flex h-8 items-center gap-1.5 rounded-lg border border-[#E8EAF0] bg-white/95 px-2.5 text-[10px] font-semibold text-[#596579] shadow-sm hover:text-[#353F52] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#5B5BD6]"
+          aria-expanded="false"
+          aria-label="底图回退，展开状态与重新加载操作"
+          title="展开底图状态"
+          onClick={(event) => {
+            event.stopPropagation()
+            setExpandedBasemapNotice(scenarioVariant ?? null)
+          }}
+        >
+          <RefreshCw size={11} aria-hidden="true" />底图回退
+        </button>
+      ) : basemapStatus === 'fallback' ? (
+        <div className={`absolute top-3 flex items-center gap-2 rounded-lg border border-[#E8EAF0] bg-white/95 px-2.5 py-1.5 text-[10px] text-[#6B7280] shadow-sm ${scenarioConfig ? 'right-3' : 'left-1/2 -translate-x-1/2'}`}>
           <span>
             {localBasemapCoversScenario
               ? '在线底图未载入 · 当前显示本地高清 OSM 底图'
               : '在线底图未载入 · 当前场景超出本地底图覆盖，仅保留演示图层'}
           </span>
           <button
-            onClick={() => onlineReload.current()}
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation()
+              setExpandedBasemapNotice(null)
+              onlineReload.current()
+            }}
             className="inline-flex h-6 items-center gap-1 rounded-md bg-[#EEEEFB] px-2 font-semibold text-[#5B5BD6] hover:bg-[#E3E3F8]"
           >
             <RefreshCw size={10} />重新加载在线底图
           </button>
+          {scenarioConfig && (
+            <button
+              type="button"
+              aria-label="收起底图状态"
+              className="grid size-6 place-items-center rounded-md text-[#7A8598] hover:bg-[#F4F5FA] hover:text-[#353F52]"
+              onClick={(event) => {
+                event.stopPropagation()
+                setExpandedBasemapNotice(null)
+              }}
+            >
+              <X size={11} aria-hidden="true" />
+            </button>
+          )}
         </div>
-      )}
+      ) : null}
 
       {scenarioVariant === 'routine' && (
         <>
@@ -3196,9 +3234,28 @@ export const CityMap = memo(function CityMap({
         </div>
       )}
 
-      <div ref={legend} className="absolute bottom-3 right-3 w-[174px] rounded-xl border border-[#E8EAF0] bg-white/95 px-3 py-2.5 text-[10px] shadow-sm backdrop-blur">
-        <div className="mb-1.5 text-[11px] font-semibold text-[#1A1D26]">图例</div>
-        {executionFrame ? (
+      <div
+        ref={legend}
+        className={`absolute right-3 rounded-xl border border-[#E8EAF0] bg-white/95 text-[10px] shadow-sm backdrop-blur ${scenarioConfig ? 'bottom-12' : 'bottom-3'} ${scenarioConfig && !scenarioLegendExpanded ? 'w-auto p-1.5' : 'w-[174px] px-3 py-2.5'}`}
+      >
+        {scenarioConfig ? (
+          <button
+            type="button"
+            className={`flex items-center gap-1.5 rounded-md text-[10px] font-semibold text-[#445066] transition hover:text-[#1A1D26] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#5B5BD6] ${scenarioLegendExpanded ? 'mb-1.5' : ''}`}
+            aria-expanded={scenarioLegendExpanded}
+            title={scenarioLegendExpanded ? '收起图例' : '展开图例'}
+            onClick={(event) => {
+              event.stopPropagation()
+              setExpandedScenarioLegend((current) => current === scenarioVariant ? null : scenarioVariant ?? null)
+            }}
+          >
+            <Layers3 size={13} aria-hidden="true" />
+            图例
+          </button>
+        ) : (
+          <div className="mb-1.5 text-[11px] font-semibold text-[#1A1D26]">图例</div>
+        )}
+        {(!scenarioConfig || scenarioLegendExpanded) && (executionFrame ? (
           <>
             {executionUnits.some((unit) => unit.kind === 'fire') && <LegendPoi kind="fire_station" label="演示消防车辆" />}
             {executionUnits.some((unit) => unit.kind === 'police') && <LegendPoi kind="police" label="演示警务车辆" />}
@@ -3317,8 +3374,8 @@ export const CityMap = memo(function CityMap({
               </>
             )}
           </>
-        )}
-        {!scenarioConfig && showSimulationProvenance && (
+        ))}
+        {(!scenarioConfig || scenarioLegendExpanded) && !scenarioConfig && showSimulationProvenance && (
           <div className="mt-1.5 border-t border-[#E8EAF0] pt-1.5">
             <OriginMark
               origin="simulated"
