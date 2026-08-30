@@ -231,6 +231,10 @@ export function CoverageProbe() {
   useEffect(() => {
     const instance = map.current
     if (!ready || !instance || !roads || !buildings) return
+    // `ready` 只说明**曾经**有样式载入完。底图在「在线矢量瓦片 ↔ 本地快照」之间
+    // 切换时会整个重建，这中间 addSource 会抛 "Style is not done loading."
+    // 直接跳过是安全的：切完必然再触发一次 style.load，styleRevision 变了会重跑本 effect。
+    if (!instance.isStyleLoaded()) return
 
     // 地名压在最上面。回退到本地快照时没有这一层，beforeId 给 undefined
     const beforeId = instance.getLayer('label-place') ? 'label-place' : undefined
