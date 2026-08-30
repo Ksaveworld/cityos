@@ -1,0 +1,378 @@
+/**
+ * 阶段 0 验证页样式。只挂在 `.p0-root` 下，不污染主看板。
+ *
+ * 色值是**临时的**。`docs/视觉方案.md` 顶部标了失效，现行主看板走 8/17 定下的
+ * 浅色；而 `调度台改造意图.md` 又把调度台定成深色。两者冲突，色板取值是
+ * 路线图的未定项之一，等拍板。这里先用 `视觉方案.md` 里那套深色中性值加
+ * `--cool` / `--smoke` 两个语义色顶着，不新造色相。
+ *
+ * 字号下限按 `地图要素显示规则.md`：正文 14、次级 12、关键数字 24 以上、
+ * 点击热区 40 × 40。这一页不允许出现 8px / 9px。
+ */
+.p0-root {
+  --p0-bg: #070b14;
+  --p0-panel: rgba(16, 24, 39, 0.9);
+  --p0-line: rgba(148, 163, 184, 0.24);
+  --p0-ink: #e7ecf3;
+  --p0-ink-2: #93a0b3;
+  --p0-ink-3: #66748a;
+  /* 覆盖 = 光。撤走覆盖 = 光退掉，不是换一个颜色。 */
+  --p0-cover: #4d8fd6;
+  --p0-cover-bright: #8cc4f5;
+  /* 失去覆盖 = 暖色警示，只用在空洞和数字上，全页不再有第三个色相 */
+  --p0-loss: #e8964a;
+
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: var(--p0-bg);
+  color: var(--p0-ink);
+  font-family: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+.p0-root *,
+.p0-root *::before,
+.p0-root *::after {
+  box-sizing: border-box;
+}
+
+.p0-map {
+  position: absolute;
+  inset: 0;
+}
+
+.p0-panel {
+  position: absolute;
+  border: 1px solid var(--p0-line);
+  border-radius: 12px;
+  background: var(--p0-panel);
+  backdrop-filter: blur(8px);
+}
+
+/* ── 顶部：数据分层一次说清，不逐条标注「模拟」 ───────────────── */
+
+.p0-provenance {
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 16px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--p0-ink-2);
+  white-space: nowrap;
+}
+
+.p0-provenance b {
+  color: var(--p0-ink);
+  font-weight: 600;
+}
+
+.p0-provenance .p0-sep {
+  width: 1px;
+  height: 18px;
+  background: var(--p0-line);
+}
+
+/* ── 左上：这一页要回答什么 ───────────────────────────────── */
+
+.p0-question {
+  top: 16px;
+  left: 16px;
+  width: 268px;
+  padding: 14px 16px;
+}
+
+.p0-question h1 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.p0-question p {
+  margin: 8px 0 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--p0-ink-2);
+}
+
+.p0-question kbd {
+  padding: 1px 6px;
+  border: 1px solid var(--p0-line);
+  border-radius: 4px;
+  background: rgba(148, 163, 184, 0.12);
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--p0-ink);
+}
+
+/* ── 左下：代价读数 ──────────────────────────────────────── */
+
+.p0-readout {
+  left: 16px;
+  bottom: 16px;
+  width: 268px;
+  padding: 14px 16px;
+}
+
+.p0-readout-label {
+  font-size: 13px;
+  color: var(--p0-ink-2);
+}
+
+.p0-readout-value {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 4px;
+  color: var(--p0-loss);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+.p0-readout-value strong {
+  font-size: 46px;
+  font-weight: 600;
+  line-height: 1.05;
+}
+
+.p0-readout-value span {
+  font-size: 16px;
+}
+
+.p0-readout-value.is-idle {
+  color: var(--p0-ink-3);
+}
+
+.p0-readout-sub {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--p0-line);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--p0-ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 右下：图例 ─────────────────────────────────────────── */
+
+.p0-legend {
+  right: 16px;
+  bottom: 16px;
+  width: 218px;
+  padding: 14px 16px;
+}
+
+.p0-legend h2 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--p0-ink-2);
+}
+
+.p0-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 0;
+  font-size: 14px;
+}
+
+.p0-swatch {
+  width: 22px;
+  height: 12px;
+  flex: none;
+  border-radius: 3px;
+}
+
+.p0-swatch.is-cover {
+  border: 1px solid var(--p0-cover-bright);
+  background: rgba(77, 143, 214, 0.28);
+}
+
+.p0-swatch.is-void {
+  border: 1px dashed var(--p0-loss);
+  background: rgba(232, 150, 74, 0.1);
+}
+
+.p0-swatch.is-lit {
+  border: 1px solid #a8bdd4;
+  background: #7b93ad;
+}
+
+.p0-swatch.is-ash {
+  border: 1px solid #4a5567;
+  background: #39424f;
+}
+
+/* ── 右上：唯一的按钮 ───────────────────────────────────── */
+
+.p0-controls {
+  top: 16px;
+  right: 16px;
+  width: 268px;
+  padding: 14px 16px;
+}
+
+.p0-action {
+  display: block;
+  width: 100%;
+  min-height: 52px;
+  padding: 0 16px;
+  border: 1px solid var(--p0-cover-bright);
+  border-radius: 10px;
+  background: rgba(77, 143, 214, 0.2);
+  color: var(--p0-ink);
+  font-family: inherit;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+
+.p0-action:hover {
+  background: rgba(77, 143, 214, 0.32);
+}
+
+.p0-action:focus-visible {
+  outline: 2px solid var(--p0-cover-bright);
+  outline-offset: 2px;
+}
+
+.p0-action.is-restore {
+  border-color: rgba(232, 150, 74, 0.7);
+  background: rgba(232, 150, 74, 0.16);
+}
+
+.p0-action.is-restore:hover {
+  background: rgba(232, 150, 74, 0.26);
+}
+
+.p0-action-hint {
+  margin: 8px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--p0-ink-3);
+}
+
+.p0-duration {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--p0-line);
+}
+
+.p0-duration-label {
+  font-size: 13px;
+  color: var(--p0-ink-2);
+}
+
+.p0-duration-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* 40 × 40 热区下限，见地图要素显示规则 */
+.p0-duration-row button {
+  flex: 1;
+  min-height: 40px;
+  border: 1px solid var(--p0-line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--p0-ink-2);
+  font-family: inherit;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.p0-duration-row button[aria-pressed='true'] {
+  border-color: var(--p0-cover-bright);
+  background: rgba(77, 143, 214, 0.2);
+  color: var(--p0-ink);
+}
+
+.p0-duration-row button:focus-visible {
+  outline: 2px solid var(--p0-cover-bright);
+  outline-offset: 2px;
+}
+
+/* ── 地图上的站点标记 ───────────────────────────────────── */
+
+.p0-station {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--p0-ink);
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.p0-station-dot {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 40px; /* 热区下限 */
+  height: 40px;
+}
+
+.p0-station-dot::before {
+  content: '';
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--p0-cover-bright);
+  border-radius: 5px;
+  background: rgba(7, 11, 20, 0.9);
+  box-shadow: 0 0 14px rgba(140, 196, 245, 0.55);
+}
+
+.p0-station-dot::after {
+  content: '';
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--p0-cover-bright);
+}
+
+.p0-station-name {
+  padding: 3px 8px;
+  border: 1px solid var(--p0-line);
+  border-radius: 6px;
+  background: rgba(7, 11, 20, 0.82);
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.p0-station.is-withdrawn .p0-station-dot::before {
+  border-color: var(--p0-loss);
+  box-shadow: 0 0 14px rgba(232, 150, 74, 0.45);
+}
+
+.p0-station.is-withdrawn .p0-station-dot::after {
+  background: var(--p0-loss);
+}
+
+/* ── 状态提示 ───────────────────────────────────────────── */
+
+.p0-status {
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  padding: 10px 16px;
+  font-size: 14px;
+  color: var(--p0-ink-2);
+}
+
+.p0-status.is-error {
+  border-color: rgba(240, 74, 62, 0.4);
+  color: #f0857b;
+}
