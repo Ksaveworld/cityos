@@ -4,6 +4,8 @@
 
 **请先完整阅读 CLAUDE.md 再开始任何工作。**
 
+随后读取 [HOT_STATE.md](./HOT_STATE.md) 并运行 `npm run doctor`，以当前 Git、Node、端口和 Vercel 绑定结果为准；不得把历史摘要或旧测试结果当作本轮证据。
+
 ## 与 Claude Code 协同时的额外约定
 
 本项目可能同时有 Claude Code 和 Codex 在工作。为避免冲突：

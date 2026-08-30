@@ -46,20 +46,5 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
 
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Backend tests
-        run: npm run test:backend
-
-      - name: Agent and chat tests
-        run: npm run test:chat
-
-      - name: Lint
-        run: npm run lint
-
-      - name: Production build
-        run: npm run build
-
-      - name: PostgreSQL acceptance gate
-        run: npm run db:smoke
+      - name: Run shared quality gate
+        run: npm run verify:ci

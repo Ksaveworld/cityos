@@ -3,13 +3,20 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "engines": {
+    "node": ">=22 <23 || >=24 <25"
+  },
   "scripts": {
-    "dev": "vite",
+    "doctor": "node scripts/codex-doctor.mjs",
+    "dev": "vite --host 127.0.0.1 --port 5173 --strictPort",
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b --noEmit",
     "lint": "oxlint",
     "test:chat": "node --test server/chat-core.test.ts",
     "test:backend": "node --test server/cityos/*.test.ts",
+    "verify": "npm run typecheck && npm run test:backend && npm run test:chat && npm run lint && npm run build",
+    "verify:ci": "npm run verify && npm run db:smoke",
+    "deploy:check": "node scripts/codex-doctor.mjs --deploy",
     "db:up": "docker compose -f services/postgres/docker-compose.yml up -d",
     "db:down": "docker compose -f services/postgres/docker-compose.yml down",
     "db:migrate": "node scripts/db-migrate.mjs",
